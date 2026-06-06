@@ -326,7 +326,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
 const DEFAULT_CATS=['Food','Travel','Subscription','Shopping','Rent','Medical','Entertainment','Utilities','Groceries','Education','Insurance','EMI','Personal Care','Gifts','Other'];
 
-let currentMonth=(()=>{const p=new URLSearchParams(location.search).get('m');if(p&&/^\d{4}-\d{2}$/.test(p))return p;const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');})();
+let currentMonth=(()=>{const p=new URLSearchParams(location.search).get('m');if(p&&/^\\d{4}-\\d{2}$/.test(p))return p;const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');})();
 let expenses=[];
 let editingId=null;
 let fabOpen=false;
