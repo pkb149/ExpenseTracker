@@ -318,6 +318,7 @@ ${body.text.slice(0, 3000)}
 Return ONLY valid JSON.
 
 If NOT an expense or refund (promotional email, OTP, newsletter, delivery update with no amount), return {"skip": true}.
+Also return {"skip": true} for: credit card bill payments, credit card outstanding due reminders, credit card statement emails, loan EMI debit alerts — these are payment settlements, not expenses.
 
 If this is a REFUND, CANCELLATION, or CASHBACK where money is returned to the user:
 {
