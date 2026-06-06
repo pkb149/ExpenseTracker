@@ -362,10 +362,44 @@ If amount not found in a refund email, still return the refund with best-guess a
   if (parsed.skip) return c.json({ skipped: true, reason: 'Not an expense or amount missing' })
 
   const { meta } = await c.env.DB.prepare(
-    'INSERT INTO expenses (description,amount,date,paid_by,category,who_for,is_marriage_related,source,raw_input) VALUES (?,?,?,?,?,?,0,?,?)'
+    'INSERT INTO pending_expenses (description,amount,date,paid_by,category,who_for,is_marriage_related,source,raw_input) VALUES (?,?,?,?,?,?,0,?,?)'
   ).bind(parsed.description, parsed.amount, parsed.date, parsed.paid_by, parsed.category, parsed.who_for, body.source ?? 'ingest', body.text.slice(0, 1000)).run()
 
-  return c.json({ saved: true, id: meta.last_row_id, expense: parsed })
+  return c.json({ pending: true, id: meta.last_row_id, expense: parsed })
+})
+
+app.get('/api/pending', async (c) => {
+  const { results } = await c.env.DB.prepare(
+    'SELECT * FROM pending_expenses ORDER BY created_at DESC'
+  ).all()
+  return c.json(results)
+})
+
+app.post('/api/pending/:id/approve', async (c) => {
+  const id = c.req.param('id')
+  const overrides = await c.req.json<Partial<ExpenseBody>>().catch(() => ({}))
+  const { results } = await c.env.DB.prepare('SELECT * FROM pending_expenses WHERE id=?').bind(id).all()
+  if (!results.length) return c.json({ error: 'Not found' }, 404)
+  const p = results[0] as Record<string, unknown>
+  const { meta } = await c.env.DB.prepare(
+    'INSERT INTO expenses (description,amount,date,paid_by,category,who_for,is_marriage_related,source,raw_input) VALUES (?,?,?,?,?,?,?,?,?)'
+  ).bind(
+    overrides.description ?? p.description,
+    overrides.amount ?? p.amount,
+    overrides.date ?? p.date,
+    overrides.paid_by ?? p.paid_by,
+    overrides.category ?? p.category,
+    overrides.who_for ?? p.who_for,
+    overrides.is_marriage_related !== undefined ? (overrides.is_marriage_related ? 1 : 0) : p.is_marriage_related,
+    p.source, p.raw_input
+  ).run()
+  await c.env.DB.prepare('DELETE FROM pending_expenses WHERE id=?').bind(id).run()
+  return c.json({ ok: true, expense_id: meta.last_row_id })
+})
+
+app.delete('/api/pending/:id', async (c) => {
+  await c.env.DB.prepare('DELETE FROM pending_expenses WHERE id=?').bind(c.req.param('id')).run()
+  return c.json({ ok: true })
 })
 
 app.get('/api/categories', async (c) => {
@@ -525,6 +559,40 @@ app.get('/api/openapi.json', (c) => {
           summary: 'Delete an expense by id',
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }],
           responses: { '200': { description: 'Deleted' } },
+        },
+      },
+      '/api/pending': {
+        get: {
+          operationId: 'listPending',
+          summary: 'List pending expenses awaiting review',
+          description: 'Returns auto-imported expenses from Gmail that have not yet been approved. Review these and approve or reject each one. Always ask the user to confirm who paid and who it was for before approving.',
+          responses: {
+            '200': {
+              description: 'Array of pending expenses',
+              content: { 'application/json': { schema: { type: 'array', items: { '$ref': '#/components/schemas/Expense' } } } },
+            },
+          },
+        },
+      },
+      '/api/pending/{id}/approve': {
+        post: {
+          operationId: 'approvePending',
+          summary: 'Approve a pending expense and move it to expenses',
+          description: 'Approves the pending item. Optionally pass updated fields (paid_by, who_for, category, etc.) to correct before saving. Always confirm paid_by and who_for with the user first.',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }],
+          requestBody: {
+            required: false,
+            content: { 'application/json': { schema: { '$ref': '#/components/schemas/ExpenseInput' } } },
+          },
+          responses: { '200': { description: 'Approved and saved as expense' } },
+        },
+      },
+      '/api/pending/{id}': {
+        delete: {
+          operationId: 'rejectPending',
+          summary: 'Reject and discard a pending expense',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }],
+          responses: { '200': { description: 'Rejected' } },
         },
       },
     },

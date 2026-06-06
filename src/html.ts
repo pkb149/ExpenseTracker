@@ -93,6 +93,14 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .btn-row{display:flex;gap:.625rem;margin-top:1rem}
 .btn-row .btn{flex:1}
 .btn-block{width:100%}
+.pending-btn{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);padding:.3rem .65rem;border-radius:.375rem;font-size:.8125rem;cursor:pointer;display:flex;align-items:center;gap:.35rem}
+.pending-btn:hover{background:rgba(255,255,255,.25)}
+.badge-count{background:#ef4444;color:#fff;border-radius:9999px;font-size:.65rem;font-weight:700;padding:.1rem .4rem;min-width:1.1rem;text-align:center;display:none}
+.pending-card{background:var(--card);border-radius:.625rem;padding:.875rem;margin-bottom:.625rem;box-shadow:var(--shadow);border-left:3px solid var(--primary)}
+.pending-card .exp-desc{font-weight:600;font-size:.9375rem}
+.pending-source{font-size:.7rem;color:var(--muted);margin-top:.15rem}
+.pending-actions{display:flex;gap:.5rem;margin-top:.75rem}
+.pending-actions .btn{flex:1;font-size:.8125rem;padding:.45rem .5rem}
 .parse-result{margin-top:1rem;border-top:1.5px solid var(--border);padding-top:1rem;display:none}
 .parse-result.show{display:block}
 .spinner{display:inline-block;width:.875rem;height:.875rem;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:.35rem}
@@ -109,6 +117,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 <header class="header">
   <h1>Expense Tracker</h1>
   <div style="display:flex;gap:.5rem;align-items:center">
+    <button class="pending-btn" onclick="openPendingModal()" id="pending-btn">
+      Review <span class="badge-count" id="pending-count">0</span>
+    </button>
     <button class="export-btn" onclick="exportCSV()">Export CSV</button>
     <a href="/auth/logout" class="export-btn" style="text-decoration:none">Logout</a>
   </div>
@@ -269,6 +280,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
         </div>
       </form>
     </div>
+  </div>
+</div>
+
+<div class="overlay" id="pending-overlay">
+  <div class="modal" style="max-height:92vh">
+    <div class="modal-hdr">
+      <div class="modal-title">Review Queue</div>
+      <div style="display:flex;gap:.5rem;align-items:center">
+        <button class="btn btn-success" style="font-size:.8125rem;padding:.35rem .75rem" onclick="approveAll()">Approve All</button>
+        <button class="modal-close" onclick="closePendingModal()">&times;</button>
+      </div>
+    </div>
+    <div id="pending-list"><div class="empty"><div class="empty-icon">&#x2705;</div><div>No pending items</div></div></div>
   </div>
 </div>
 
@@ -585,6 +609,88 @@ function ensureCategoryOption(selectId,value){
   sel.value=value;
 }
 
+load();
+
+let pendingItems=[];
+
+async function loadPendingCount(){
+  try{
+    const res=await fetch('/api/pending');
+    pendingItems=await res.json();
+    const badge=document.getElementById('pending-count');
+    if(pendingItems.length){badge.textContent=pendingItems.length;badge.style.display='inline-block';}
+    else{badge.style.display='none';}
+  }catch(e){}
+}
+
+function openPendingModal(){
+  renderPendingList();
+  document.getElementById('pending-overlay').classList.add('open');
+}
+function closePendingModal(){document.getElementById('pending-overlay').classList.remove('open');}
+
+function renderPendingList(){
+  const el=document.getElementById('pending-list');
+  if(!pendingItems.length){
+    el.innerHTML='<div class="empty"><div class="empty-icon">&#x2705;</div><div>All clear — no pending items</div></div>';
+    return;
+  }
+  el.innerHTML=pendingItems.map(function(p){
+    var selPb=function(v){return p.paid_by===v?' selected':''};
+    var selWf=function(v){return p.who_for===v?' selected':''};
+    return '<div class="pending-card" id="pc-'+p.id+'">'+
+      '<div class="exp-desc">'+esc(p.description)+'</div>'+
+      '<div class="pending-source">'+esc(p.source||'ingest')+' &middot; '+fmtDate(p.date)+'</div>'+
+      (p.raw_input?'<div class="exp-raw" style="margin-top:.3rem">'+esc(p.raw_input.slice(0,120))+'</div>':'')+
+      '<div class="fg2" style="margin-top:.625rem">'+
+        '<div class="fr" style="margin-bottom:.5rem"><label>Amount (&#x20B9;)</label><input type="number" id="pa-'+p.id+'" value="'+p.amount+'" step="0.01"></div>'+
+        '<div class="fr" style="margin-bottom:.5rem"><label>Date</label><input type="date" id="pd-'+p.id+'" value="'+p.date+'"></div>'+
+      '</div>'+
+      '<div class="fg2">'+
+        '<div class="fr" style="margin-bottom:.5rem"><label>Paid By</label>'+
+          '<select id="ppb-'+p.id+'"><option'+selPb('Prashant')+'>Prashant</option><option'+selPb('Prayashi')+'>Prayashi</option></select>'+
+        '</div>'+
+        '<div class="fr" style="margin-bottom:.5rem"><label>Who For</label>'+
+          '<select id="pwf-'+p.id+'"><option'+selWf('Common')+'>Common</option><option'+selWf('Prashant')+'>Prashant</option><option'+selWf('Prayashi')+'>Prayashi</option></select>'+
+        '</div>'+
+      '</div>'+
+      '<div class="fr" style="margin-bottom:.5rem"><label>Category</label><input type="text" id="pcat-'+p.id+'" value="'+esc(p.category)+'"></div>'+
+      '<div class="pending-actions">'+
+        '<button class="btn btn-secondary" onclick="skipPending('+p.id+')">Skip</button>'+
+        '<button class="btn btn-success" onclick="approvePending('+p.id+')">Approve</button>'+
+      '</div>'+
+    '</div>';
+  }).join('');
+}
+
+async function approvePending(id){
+  const overrides={
+    amount:parseFloat(document.getElementById('pa-'+id).value),
+    date:document.getElementById('pd-'+id).value,
+    paid_by:document.getElementById('ppb-'+id).value,
+    who_for:document.getElementById('pwf-'+id).value,
+    category:document.getElementById('pcat-'+id).value,
+  };
+  await fetch('/api/pending/'+id+'/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(overrides)});
+  pendingItems=pendingItems.filter(p=>p.id!==id);
+  renderPendingList();
+  loadPendingCount();
+  load();
+}
+
+async function skipPending(id){
+  await fetch('/api/pending/'+id,{method:'DELETE'});
+  pendingItems=pendingItems.filter(p=>p.id!==id);
+  renderPendingList();
+  loadPendingCount();
+}
+
+async function approveAll(){
+  for(const p of [...pendingItems]){await approvePending(p.id);}
+}
+
+loadPendingCount();
+setInterval(loadPendingCount,5*60*1000);
 load();
 </script>
 </body>

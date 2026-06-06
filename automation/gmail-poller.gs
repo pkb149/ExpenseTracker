@@ -7,7 +7,7 @@
 // 3. Done — runs every hour automatically
 
 const WORKER_URL = 'https://expense-tracker-4er.pages.dev';
-const INGEST_TOKEN = 'REPLACE_WITH_YOUR_INGEST_TOKEN';
+const INGEST_TOKEN = 'a055b07a57ccbc1c071e0b358cd45a27d389bc34f7a55035cc10216c4c1cb417';
 const LABEL_NAME = 'expense-tracker-processed';
 const PAID_BY_DEFAULT = 'Prashant'; // change to 'Prayashi' if Prayashi's Gmail
 
@@ -55,7 +55,7 @@ function setup() {
 function pollGmail() {
   const label = GmailApp.getUserLabelByName(LABEL_NAME) || GmailApp.createLabel(LABEL_NAME);
   const query = WATCHED_SENDERS.map(s => 'from:' + s).join(' OR ');
-  const threads = GmailApp.search('(' + query + ') -label:' + LABEL_NAME + ' newer_than:2d');
+  const threads = GmailApp.search('(' + query + ') -label:' + LABEL_NAME + ' newer_than:2h');
 
   let saved = 0;
   let skipped = 0;
