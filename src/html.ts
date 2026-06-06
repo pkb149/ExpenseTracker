@@ -355,6 +355,7 @@ function nextMonth(){
 }
 
 function resetChatUI(){
+  if(chatAbort){chatAbort.abort();chatAbort=null;}
   chatHistory=[];
   document.getElementById('chat-messages').style.display='none';
   document.getElementById('chat-messages').innerHTML='';
@@ -449,6 +450,7 @@ function renderSummary(){
 }
 
 let chatHistory=[];
+let chatAbort=null;
 
 function chatKey(){return 'et-chat-'+currentMonth;}
 
@@ -521,12 +523,14 @@ async function sendChatMessage(text){
   const assistantDiv=appendChatMsg('assistant','');
   const input=document.getElementById('chat-input');
   if(input)input.disabled=true;
+  chatAbort=new AbortController();
 
   try{
     const res=await fetch('/api/chat',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({month:currentMonth,messages:chatHistory})
+      body:JSON.stringify({month:currentMonth,messages:chatHistory}),
+      signal:chatAbort.signal
     });
     const reader=res.body.getReader();
     const decoder=new TextDecoder();
@@ -553,8 +557,9 @@ async function sendChatMessage(text){
     chatHistory.push({role:'assistant',content:assistantText});
     saveChatHistory();
   }catch(e){
-    assistantDiv.textContent='Error: '+e.message;
+    if(e.name!=='AbortError')assistantDiv.textContent='Error: '+e.message;
   }finally{
+    chatAbort=null;
     if(input)input.disabled=false;
     if(input)input.focus();
   }
