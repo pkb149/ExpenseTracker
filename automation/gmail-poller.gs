@@ -105,6 +105,54 @@ function pollGmail() {
   Logger.log('Done. Saved: ' + saved + ', Skipped: ' + skipped);
 }
 
+// Backfill — run manually to import last 37 days in batches of 40
+// Run multiple times — already-processed threads are labelled and skipped automatically
+const BACKFILL_BATCH = 40;
+
+function backfill() {
+  const label = GmailApp.getUserLabelByName(LABEL_NAME) || GmailApp.createLabel(LABEL_NAME);
+  const senderQuery = WATCHED_SENDERS.map(s => 'from:' + s).join(' OR ');
+  const keywordQuery = 'subject:(order OR invoice OR payment OR refund OR "order confirmed" OR "order placed" OR "amount debited" OR "amount credited" OR "successfully paid") -label:' + LABEL_NAME + ' newer_than:37d';
+  const seen = new Set();
+  const allThreads = [
+    ...GmailApp.search('(' + senderQuery + ') -label:' + LABEL_NAME + ' newer_than:37d'),
+    ...GmailApp.search(keywordQuery),
+  ].filter(function(t) { if (seen.has(t.getId())) return false; seen.add(t.getId()); return true; });
+
+  Logger.log('Found ' + allThreads.length + ' unprocessed threads.');
+
+  let saved = 0, skipped = 0, processed = 0;
+
+  for (var i = 0; i < allThreads.length; i++) {
+    if (processed >= BACKFILL_BATCH) {
+      Logger.log('Batch limit reached (' + BACKFILL_BATCH + '). Run backfill() again for the next batch.');
+      break;
+    }
+    var thread = allThreads[i];
+    thread.getMessages().forEach(function(msg) {
+      if (processed >= BACKFILL_BATCH) return;
+      var body = msg.getPlainBody() || msg.getBody().replace(/<[^>]+>/g, ' ');
+      var receivedDate = Utilities.formatDate(msg.getDate(), 'Asia/Kolkata', 'yyyy-MM-dd');
+      var text = 'From: ' + msg.getFrom() + '\nSubject: ' + msg.getSubject() + '\nEmail received: ' + receivedDate + '\n\n' + body;
+      try {
+        var res = UrlFetchApp.fetch(WORKER_URL + '/api/ingest', {
+          method: 'post', contentType: 'application/json',
+          headers: { Authorization: 'Bearer ' + INGEST_TOKEN },
+          payload: JSON.stringify({ text: text, source: 'gmail-backfill', paid_by: PAID_BY_DEFAULT, received_date: receivedDate }),
+          muteHttpExceptions: true,
+        });
+        var r = JSON.parse(res.getContentText());
+        if (r.pending) { saved++; Logger.log('Queued: ' + r.expense.description); }
+        else { skipped++; Logger.log('Skipped: ' + msg.getSubject()); }
+        processed++;
+      } catch(e) { Logger.log('Error: ' + e); }
+    });
+    thread.addLabel(label);
+  }
+
+  Logger.log('Batch done. Queued: ' + saved + ', Skipped: ' + skipped + '. Run again if more remain.');
+}
+
 // Manual test — run this to test a single thread
 function testLatest() {
   const query = WATCHED_SENDERS.map(s => 'from:' + s).join(' OR ');
