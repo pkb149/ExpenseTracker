@@ -434,6 +434,60 @@ app.get('/api/categories', async (c) => {
   return c.json(all)
 })
 
+app.post('/api/chat', async (c) => {
+  if (!c.env.OPENROUTER_API_KEY) return c.json({ error: 'No API key' }, 500)
+  const { month, messages } = await c.req.json<{ month?: string; messages: { role: string; content: string }[] }>()
+
+  const stmt = month
+    ? c.env.DB.prepare('SELECT * FROM expenses WHERE strftime("%Y-%m", date) = ? ORDER BY date ASC').bind(month)
+    : c.env.DB.prepare('SELECT * FROM expenses ORDER BY date ASC')
+  const { results } = await stmt.all() as { results: Record<string, unknown>[] }
+
+  const total = results.reduce((s, e) => s + (e.amount as number), 0)
+  const byCat: Record<string, number> = {}
+  results.forEach(e => { const k = e.category as string; byCat[k] = (byCat[k] || 0) + (e.amount as number) })
+  const cmnP = results.filter(e => e.who_for === 'Common' && e.paid_by === 'Prashant').reduce((s, e) => s + (e.amount as number), 0)
+  const cmnQ = results.filter(e => e.who_for === 'Common' && e.paid_by === 'Prayashi').reduce((s, e) => s + (e.amount as number), 0)
+  const topTxns = (results as Record<string, unknown>[])
+    .sort((a, b) => Math.abs(b.amount as number) - Math.abs(a.amount as number))
+    .slice(0, 30)
+    .map(e => `${e.date} ${e.description} ₹${e.amount} [${e.category}, ${e.paid_by}, for ${e.who_for}]`)
+    .join('\n')
+
+  const systemPrompt = `You are a personal finance analyst for Prashant & Prayashi. Be concise and direct. Answer questions about their expenses.
+
+Data for ${month ?? 'all time'}:
+- Total: ₹${total.toFixed(0)} across ${results.length} transactions
+- By category: ${Object.entries(byCat).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`${k} ₹${v.toFixed(0)}`).join(', ')}
+- Common expenses: Prashant paid ₹${cmnP.toFixed(0)}, Prayashi paid ₹${cmnQ.toFixed(0)}
+- Settlement: ${Math.abs((cmnP-cmnQ)/2) < 1 ? 'Settled' : (cmnP > cmnQ ? `Prayashi owes Prashant ₹${((cmnP-cmnQ)/2).toFixed(0)}` : `Prashant owes Prayashi ₹${((cmnQ-cmnP)/2).toFixed(0)}`)}
+
+Top transactions:
+${topTxns}`
+
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${c.env.OPENROUTER_API_KEY}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://expense-tracker-4er.pages.dev',
+    },
+    body: JSON.stringify({
+      model: c.env.LLM_MODEL ?? 'openai/gpt-oss-120b:free',
+      messages: [{ role: 'system', content: systemPrompt }, ...messages],
+      stream: true,
+    }),
+  })
+
+  return new Response(res.body, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'X-Accel-Buffering': 'no',
+    },
+  })
+})
+
 app.get('/api/analyze', async (c) => {
   if (!c.env.OPENROUTER_API_KEY) return c.json({ error: 'OPENROUTER_API_KEY not configured' }, 500)
   const month = c.req.query('month')

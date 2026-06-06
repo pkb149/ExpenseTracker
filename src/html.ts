@@ -93,6 +93,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .btn-row{display:flex;gap:.625rem;margin-top:1rem}
 .btn-row .btn{flex:1}
 .btn-block{width:100%}
+.chat-panel{display:flex;flex-direction:column;gap:0}
+.chat-messages{display:flex;flex-direction:column;gap:.625rem;max-height:16rem;overflow-y:auto;padding:.25rem 0}
+.chat-msg{font-size:.875rem;line-height:1.5;padding:.5rem .75rem;border-radius:.5rem;max-width:92%}
+.chat-msg.user{background:var(--primary);color:#fff;align-self:flex-end}
+.chat-msg.assistant{background:#f1f5f9;color:var(--text);align-self:flex-start;white-space:pre-wrap}
+.chat-input-row{display:flex;gap:.5rem;margin-top:.625rem}
+.chat-input-row input{flex:1;padding:.55rem .75rem;border:1.5px solid var(--border);border-radius:.5rem;font-size:.875rem}
+.chat-input-row input:focus{outline:none;border-color:var(--primary)}
+.search-wrap{padding:.25rem .875rem .625rem;position:relative}
+.search-wrap input{width:100%;padding:.55rem .75rem .55rem 2.25rem;border:1.5px solid var(--border);border-radius:.5rem;font-size:.875rem;background:#fff}
+.search-wrap input:focus{outline:none;border-color:var(--primary)}
+.search-icon{position:absolute;left:1.5rem;top:50%;transform:translateY(-50%);color:var(--muted);font-size:.9rem;pointer-events:none}
 .pending-btn{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);padding:.3rem .65rem;border-radius:.375rem;font-size:.8125rem;cursor:pointer;display:flex;align-items:center;gap:.35rem}
 .pending-btn:hover{background:rgba(255,255,255,.25)}
 .badge-count{background:#ef4444;color:#fff;border-radius:9999px;font-size:.65rem;font-weight:700;padding:.1rem .4rem;min-width:1.1rem;text-align:center;display:none}
@@ -158,10 +170,21 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 
 <div class="section">
   <div class="section-title">AI Analysis</div>
-  <div class="card ai-card">
-    <button class="btn btn-primary btn-block" id="analyze-btn" onclick="doAnalyze()">&#x2728; Analyze this month</button>
-    <div id="ai-result" style="display:none"></div>
+  <div class="card">
+    <div class="chat-panel">
+      <div class="chat-messages" id="chat-messages" style="display:none"></div>
+      <button class="btn btn-primary btn-block" id="analyze-btn" onclick="startChat()">&#x2728; Analyze this month</button>
+      <div class="chat-input-row" id="chat-input-row" style="display:none">
+        <input type="text" id="chat-input" placeholder="Ask a follow-up question..." onkeydown="if(event.key==='Enter')sendChat()">
+        <button class="btn btn-primary" onclick="sendChat()">&#x27A4;</button>
+      </div>
+    </div>
   </div>
+</div>
+
+<div class="search-wrap">
+  <span class="search-icon">&#x1F50D;</span>
+  <input type="text" id="search-input" placeholder="Search expenses..." oninput="filterExpenses(this.value)">
 </div>
 
 <div class="expenses-section">
@@ -329,6 +352,12 @@ function nextMonth(){
 }
 
 async function load(){
+  chatHistory=[];
+  document.getElementById('chat-messages').style.display='none';
+  document.getElementById('chat-messages').innerHTML='';
+  document.getElementById('chat-input-row').style.display='none';
+  document.getElementById('analyze-btn').style.display='block';
+  document.getElementById('search-input').value='';
   const[y,m]=currentMonth.split('-');
   document.getElementById('month-label').textContent=MONTHS[parseInt(m)-1]+' '+y;
   try{
@@ -410,29 +439,97 @@ function renderSummary(){
   }
 }
 
-async function doAnalyze(){
-  const btn=document.getElementById('analyze-btn');
-  const result=document.getElementById('ai-result');
-  btn.disabled=true;
-  btn.innerHTML='<span class="spinner"></span>Analyzing...';
-  result.style.display='none';
-  try{
-    const res=await fetch('/api/analyze?month='+currentMonth);
-    const d=await res.json();
-    if(d.error){result.innerHTML='<div style="color:var(--danger);font-size:.875rem">'+esc(d.error)+'</div>';}
-    else{
-      result.innerHTML='<ul class="insight-list">'+
-        d.insights.map(i=>'<li class="insight-item">'+esc(i)+'</li>').join('')+
-      '</ul>';
-    }
-    result.style.display='block';
-  }catch(e){
-    result.innerHTML='<div style="color:var(--danger);font-size:.875rem">Network error</div>';
-    result.style.display='block';
-  }finally{
-    btn.disabled=false;
-    btn.innerHTML='&#x2728; Analyze this month';
+let chatHistory=[];
+
+function startChat(){
+  chatHistory=[];
+  document.getElementById('chat-messages').style.display='flex';
+  document.getElementById('chat-messages').innerHTML='';
+  document.getElementById('chat-input-row').style.display='flex';
+  document.getElementById('analyze-btn').style.display='none';
+  sendChatMessage('Give me 4-5 concise insights about this month\'s spending. Be direct.');
+}
+
+function sendChat(){
+  const input=document.getElementById('chat-input');
+  const text=input.value.trim();
+  if(!text)return;
+  input.value='';
+  sendChatMessage(text);
+}
+
+function appendChatMsg(role,content){
+  const el=document.getElementById('chat-messages');
+  const div=document.createElement('div');
+  div.className='chat-msg '+role;
+  div.textContent=content;
+  el.appendChild(div);
+  el.scrollTop=el.scrollHeight;
+  return div;
+}
+
+async function sendChatMessage(text){
+  chatHistory.push({role:'user',content:text});
+  if(text!=='Give me 4-5 concise insights about this month\'s spending. Be direct.'){
+    appendChatMsg('user',text);
   }
+  const assistantDiv=appendChatMsg('assistant','');
+  const input=document.getElementById('chat-input');
+  if(input)input.disabled=true;
+
+  try{
+    const res=await fetch('/api/chat',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({month:currentMonth,messages:chatHistory})
+    });
+    const reader=res.body.getReader();
+    const decoder=new TextDecoder();
+    let buffer='';
+    let assistantText='';
+
+    while(true){
+      const{done,value}=await reader.read();
+      if(done)break;
+      buffer+=decoder.decode(value,{stream:true});
+      const lines=buffer.split('\n');
+      buffer=lines.pop();
+      for(const line of lines){
+        if(!line.startsWith('data: '))continue;
+        const data=line.slice(6).trim();
+        if(data==='[DONE]')break;
+        try{
+          const json=JSON.parse(data);
+          const delta=json.choices?.[0]?.delta?.content;
+          if(delta){assistantText+=delta;assistantDiv.textContent=assistantText;document.getElementById('chat-messages').scrollTop=9999;}
+        }catch(e){}
+      }
+    }
+    chatHistory.push({role:'assistant',content:assistantText});
+  }catch(e){
+    assistantDiv.textContent='Error: '+e.message;
+  }finally{
+    if(input)input.disabled=false;
+    if(input)input.focus();
+  }
+}
+
+function filterExpenses(q){
+  const term=q.toLowerCase().trim();
+  const el=document.getElementById('expenses-list');
+  if(!term){renderList();return;}
+  const filtered=expenses.filter(e=>
+    (e.description&&e.description.toLowerCase().includes(term))||
+    (e.category&&e.category.toLowerCase().includes(term))||
+    (e.paid_by&&e.paid_by.toLowerCase().includes(term))||
+    (e.who_for&&e.who_for.toLowerCase().includes(term))||
+    (e.raw_input&&e.raw_input.toLowerCase().includes(term))
+  );
+  if(!filtered.length){el.innerHTML='<div class="empty"><div class="empty-icon">&#x1F50D;</div><div>No matches</div></div>';return;}
+  const saved=expenses;
+  expenses=filtered;
+  renderList();
+  expenses=saved;
 }
 
 function card(label,cls,amount){
