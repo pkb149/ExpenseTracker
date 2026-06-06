@@ -415,9 +415,12 @@ function renderSummary(){
     if(settled){who='All settled up!';color='var(--success)';}
     else if(net>0){who='Prayashi owes Prashant &#x20B9;'+fmt(Math.abs(net));color='#ec4899';}
     else{who='Prashant owes Prayashi &#x20B9;'+fmt(Math.abs(net));color='#0ea5e9';}
+    const netAmt=Math.abs(net);
+    const payer=net>0?'Prayashi':'Prashant';
+    const payee=net>0?'Prashant':'Prayashi';
     document.getElementById('settlement-card').innerHTML=
-      '<div class="settle-card">'+
-        '<div class="settle-amount" style="color:'+color+'">'+who+'</div>'+
+      '<div class="settle-card" style="cursor:'+(settled?'default':'pointer')+'" onclick="'+(settled?'':'openSettleModal('+netAmt+',"'+payer+'","'+payee+'")')+'" title="'+(settled?'':'Click to record settlement')+'">'+
+        '<div class="settle-amount" style="color:'+color+'">'+who+(settled?'':' &#x270F;')+'</div>'+
         '<div class="settle-detail">Common &#x20B9;'+fmt(totalCommon)+
           ' &nbsp;·&nbsp; Prashant paid &#x20B9;'+fmt(cmnP)+
           ' &nbsp;·&nbsp; Prayashi paid &#x20B9;'+fmt(cmnQ)+'</div>'+
@@ -477,7 +480,7 @@ function restoreChat(){
 
 function startChat(){
   chatHistory=[];
-  saveChatHistory();
+  try{localStorage.removeItem(chatKey());}catch(e){}
   document.getElementById('chat-messages').style.display='flex';
   document.getElementById('chat-messages').innerHTML='';
   document.getElementById('chat-input-row').style.display='flex';
@@ -758,6 +761,36 @@ function ensureCategoryOption(selectId,value){
 
 load();
 
+let settleNet=0,settlePayer='',settlePayee='';
+
+function openSettleModal(net,payer,payee){
+  settleNet=net; settlePayer=payer; settlePayee=payee;
+  document.getElementById('settle-title').textContent=payer+' owes '+payee+' ₹'+fmt(net);
+  document.getElementById('settle-full-btn').textContent='Record full ₹'+fmt(net);
+  document.getElementById('settle-amount').value=String(Math.round(net));
+  document.getElementById('settle-overlay').style.display='flex';
+}
+
+async function recordSettlement(partial){
+  const amt=partial?parseFloat(document.getElementById('settle-amount').value):settleNet;
+  if(!amt||amt<=0)return;
+  await fetch('/api/expenses',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+      description:'Settlement: '+settlePayer+' paid '+settlePayee,
+      amount:amt,
+      date:todayISO(),
+      paid_by:settlePayer,
+      who_for:'Common',
+      category:'Settlement',
+      source:'manual'
+    })
+  });
+  document.getElementById('settle-overlay').style.display='none';
+  load();
+}
+
 let pendingItems=[];
 
 async function loadPendingCount(){
@@ -840,6 +873,21 @@ loadPendingCount();
 setInterval(loadPendingCount,5*60*1000);
 load();
 </script>
+
+<div id="settle-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:200;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:.75rem;padding:1.25rem;width:min(320px,90vw);display:flex;flex-direction:column;gap:.875rem">
+    <div style="font-weight:600;font-size:1rem" id="settle-title"></div>
+    <div style="font-size:.875rem;color:var(--muted)">Full settlement</div>
+    <button class="btn btn-success" id="settle-full-btn" onclick="recordSettlement(false)"></button>
+    <div style="font-size:.875rem;color:var(--muted);margin-top:.25rem">Partial settlement</div>
+    <div style="display:flex;gap:.5rem;align-items:center">
+      <span style="color:var(--muted)">&#x20B9;</span>
+      <input type="number" id="settle-amount" step="1" style="flex:1;padding:.4rem .5rem;border:1px solid var(--border);border-radius:.375rem;font-size:.9375rem">
+      <button class="btn btn-primary" onclick="recordSettlement(true)">Record</button>
+    </div>
+    <button class="btn btn-secondary" onclick="document.getElementById('settle-overlay').style.display='none'">Cancel</button>
+  </div>
+</div>
 </body>
 </html>`;
 }
