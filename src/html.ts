@@ -127,7 +127,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 <body>
 
 <header class="header">
-  <h1 onclick="currentMonth=(()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');})();load();" style="cursor:pointer">Expense Tracker</h1>
+  <h1 onclick="currentMonth=(()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');})();pushMonth();load();" style="cursor:pointer">Expense Tracker</h1>
   <div style="display:flex;gap:.5rem;align-items:center">
     <button class="pending-btn" onclick="openPendingModal()" id="pending-btn">
       Review <span class="badge-count" id="pending-count">0</span>
@@ -326,7 +326,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
 const DEFAULT_CATS=['Food','Travel','Subscription','Shopping','Rent','Medical','Entertainment','Utilities','Groceries','Education','Insurance','EMI','Personal Care','Gifts','Other'];
 
-let currentMonth=(()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');})();
+let currentMonth=(()=>{const p=new URLSearchParams(location.search).get('m');if(p&&/^\d{4}-\d{2}$/.test(p))return p;const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');})();
 let expenses=[];
 let editingId=null;
 let fabOpen=false;
@@ -343,15 +343,17 @@ function closeFab(){
 }
 document.addEventListener('click',e=>{if(!e.target.closest('#fab'))closeFab();});
 
+function pushMonth(){history.replaceState(null,'','?m='+currentMonth);}
+
 function prevMonth(){
   const[y,m]=currentMonth.split('-').map(Number);
   currentMonth=m===1?(y-1)+'-12':y+'-'+String(m-1).padStart(2,'0');
-  load();
+  pushMonth();load();
 }
 function nextMonth(){
   const[y,m]=currentMonth.split('-').map(Number);
   currentMonth=m===12?(y+1)+'-01':y+'-'+String(m+1).padStart(2,'0');
-  load();
+  pushMonth();load();
 }
 
 function resetChatUI(){
@@ -405,12 +407,14 @@ function renderSummary(){
     card('Total','v-total',total)+card('Prashant paid','v-prashant',pPaid)+
     card('Prayashi paid','v-prayashi',qPaid)+card('Common','v-common',common);
 
-  // Settlement — uses ALL expenses including settlement payments so balance reflects them
-  const cmnP=expenses.filter(e=>e.who_for==='Common'&&e.paid_by==='Prashant').reduce((s,e)=>s+e.amount,0);
-  const cmnQ=expenses.filter(e=>e.who_for==='Common'&&e.paid_by==='Prayashi').reduce((s,e)=>s+e.amount,0);
+  // Settlement balance: raw from actual shared expenses, adjusted by any recorded settlement payments
+  const cmnP=nonSettle.filter(e=>e.who_for==='Common'&&e.paid_by==='Prashant').reduce((s,e)=>s+e.amount,0);
+  const cmnQ=nonSettle.filter(e=>e.who_for==='Common'&&e.paid_by==='Prayashi').reduce((s,e)=>s+e.amount,0);
   const totalCommon=cmnP+cmnQ;
+  const settleByPrayashi=expenses.filter(e=>e.category==='Settlement'&&e.paid_by==='Prayashi').reduce((s,e)=>s+e.amount,0);
+  const settleByPrashant=expenses.filter(e=>e.category==='Settlement'&&e.paid_by==='Prashant').reduce((s,e)=>s+e.amount,0);
   if(totalCommon>0){
-    const net=(cmnP-cmnQ)/2;
+    const net=(cmnP-cmnQ)/2-settleByPrayashi+settleByPrashant;
     const settled=Math.abs(net)<1;
     let who,color;
     if(settled){who='All settled up!';color='var(--success)';}
@@ -749,6 +753,7 @@ function applyMonthPicker(){
   const m=document.getElementById('pick-month').value;
   const y=document.getElementById('pick-year').value;
   currentMonth=y+'-'+m;
+  pushMonth();
   closeMonthPicker();
   load();
 }
@@ -787,7 +792,7 @@ async function recordSettlement(partial){
       amount:amt,
       date:date,
       paid_by:settlePayer,
-      who_for:'Common',
+      who_for:'Settlement',
       category:'Settlement',
       source:'manual'
     })
