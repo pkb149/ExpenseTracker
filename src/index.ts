@@ -321,7 +321,7 @@ If NOT an expense or refund (promotional email, OTP, newsletter, delivery update
 
 If this is a REFUND, CANCELLATION, or CASHBACK where money is returned to the user:
 {
-  "description": "Refund: <original item or order description>",
+  "description": "Refund: Brand - <original item> (e.g. 'Refund: Myntra - Nike shoes')",
   "amount": <negative number e.g. -450>,
   "date": "<YYYY-MM-DD, use refund/credit date>",
   "paid_by": "${body.paid_by ?? 'Prashant'}",
@@ -331,7 +331,7 @@ If this is a REFUND, CANCELLATION, or CASHBACK where money is returned to the us
 
 If a normal expense:
 {
-  "description": "concise label",
+  "description": "Brand - item (e.g. 'Zomato - McDonald\\'s meal', 'Amazon - boAt earphones', 'Myntra - Nike shoes', 'Swiggy - Pizza Hut order'). Always prefix with the merchant/platform name extracted from the From: address or email content.",
   "amount": <positive number>,
   "date": "<YYYY-MM-DD>",
   "paid_by": "${body.paid_by ?? 'Prashant'}",
