@@ -6,7 +6,7 @@
 // 2. Run setup() once manually to create the Gmail label and time trigger
 // 3. Done — runs every hour automatically
 
-const WORKER_URL = 'https://expense-tracker.prashantkumarbharadwaj.workers.dev';
+const WORKER_URL = 'https://expense-tracker-4er.pages.dev';
 const INGEST_TOKEN = 'REPLACE_WITH_YOUR_INGEST_TOKEN';
 const LABEL_NAME = 'expense-tracker-processed';
 const PAID_BY_DEFAULT = 'Prashant'; // change to 'Prayashi' if Prayashi's Gmail
@@ -23,6 +23,10 @@ const WATCHED_SENDERS = [
   'receipts@uber.com',
   'email@uber.com',
   'noreply@myntra.com',
+  'refunds@myntra.com',
+  'noreply@instamart.in',
+  'no-reply@bigbasket.com',
+  'orders@bigbasket.com',
   'noreply@savana.in',
   'care@savana.in',
   'alerts@hdfcbank.com',

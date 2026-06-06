@@ -312,21 +312,33 @@ Text: """
 ${body.text.slice(0, 3000)}
 """
 
-Return ONLY valid JSON. If this is NOT an expense (promotional email, OTP, etc.), return {"skip": true}.
+Return ONLY valid JSON.
 
-Otherwise return:
+If NOT an expense or refund (promotional email, OTP, newsletter, delivery update with no amount), return {"skip": true}.
+
+If this is a REFUND, CANCELLATION, or CASHBACK where money is returned to the user:
+{
+  "description": "Refund: <original item or order description>",
+  "amount": <negative number e.g. -450>,
+  "date": "<YYYY-MM-DD, use refund/credit date>",
+  "paid_by": "${body.paid_by ?? 'Prashant'}",
+  "category": "<same category as original purchase>",
+  "who_for": "<Prashant|Prayashi|Common>"
+}
+
+If a normal expense:
 {
   "description": "concise label",
-  "amount": <number>,
+  "amount": <positive number>,
   "date": "<YYYY-MM-DD>",
   "paid_by": "${body.paid_by ?? 'Prashant'}",
   "category": "<best fit or new concise category>",
   "who_for": "<Prashant|Prayashi|Common>"
 }
 
-Category hints: Swiggy/Zomato→Food, Uber/Ola→Travel, Amazon/Myntra/Savana→Shopping, recurring/subscription→Subscription.
-Default who_for: Common.
-If amount not found, return {"skip": true}.`
+Category hints: Swiggy/Zomato→Food, Uber/Ola→Travel, Amazon/Myntra/Savana/Meesho→Shopping, recurring/subscription→Subscription, Instamart/BigBasket/grocery→Groceries.
+who_for hints: food order for one person→that person, groceries/household→Common, fashion item for one person→that person, unclear→Common.
+If amount not found in a refund email, still return the refund with best-guess amount if inferable, else {"skip": true}.`
 
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
