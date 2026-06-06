@@ -1,0 +1,112 @@
+// Expense Tracker — Gmail Auto-Fetch
+// Deploy at: https://script.google.com/home → New Project → paste this → Save → Run setup() once
+//
+// Setup:
+// 1. Replace INGEST_TOKEN with your token (same as wrangler secret INGEST_TOKEN)
+// 2. Run setup() once manually to create the Gmail label and time trigger
+// 3. Done — runs every hour automatically
+
+const WORKER_URL = 'https://expense-tracker.prashantkumarbharadwaj.workers.dev';
+const INGEST_TOKEN = 'REPLACE_WITH_YOUR_INGEST_TOKEN';
+const LABEL_NAME = 'expense-tracker-processed';
+const PAID_BY_DEFAULT = 'Prashant'; // change to 'Prayashi' if Prayashi's Gmail
+
+// Email senders to watch — add more as needed
+const WATCHED_SENDERS = [
+  'order-update@amazon.in',
+  'auto-confirm@amazon.in',
+  'shipment-tracking@amazon.in',
+  'no-reply@swiggy.com',
+  'noreply@swiggy.in',
+  'noreply@zomato.com',
+  'orders@zomato.com',
+  'receipts@uber.com',
+  'email@uber.com',
+  'noreply@myntra.com',
+  'noreply@savana.in',
+  'care@savana.in',
+  'alerts@hdfcbank.com',
+  'alerts@icicibank.com',
+  'alerts@axisbank.com',
+  'alerts@sbi.co.in',
+  'noreply@paytm.com',
+  'no-reply@phonepe.com',
+];
+
+function setup() {
+  // Create processed label
+  const existing = GmailApp.getUserLabelByName(LABEL_NAME);
+  if (!existing) GmailApp.createLabel(LABEL_NAME);
+
+  // Delete old triggers
+  ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === 'pollGmail')
+    .forEach(t => ScriptApp.deleteTrigger(t));
+
+  // Create hourly trigger
+  ScriptApp.newTrigger('pollGmail').timeBased().everyHours(1).create();
+  Logger.log('Setup complete. pollGmail will run every hour.');
+}
+
+function pollGmail() {
+  const label = GmailApp.getUserLabelByName(LABEL_NAME) || GmailApp.createLabel(LABEL_NAME);
+  const query = WATCHED_SENDERS.map(s => 'from:' + s).join(' OR ');
+  const threads = GmailApp.search('(' + query + ') -label:' + LABEL_NAME + ' newer_than:2d');
+
+  let saved = 0;
+  let skipped = 0;
+
+  threads.forEach(thread => {
+    thread.getMessages().forEach(msg => {
+      const body = msg.getPlainBody() || msg.getBody().replace(/<[^>]+>/g, ' ');
+      const subject = msg.getSubject();
+      const from = msg.getFrom();
+      const text = 'From: ' + from + '\nSubject: ' + subject + '\n\n' + body;
+
+      try {
+        const response = UrlFetchApp.fetch(WORKER_URL + '/api/ingest', {
+          method: 'post',
+          contentType: 'application/json',
+          headers: { Authorization: 'Bearer ' + INGEST_TOKEN },
+          payload: JSON.stringify({ text, source: 'gmail', paid_by: PAID_BY_DEFAULT }),
+          muteHttpExceptions: true,
+        });
+
+        const result = JSON.parse(response.getContentText());
+        if (result.saved) {
+          saved++;
+          Logger.log('Saved: ' + JSON.stringify(result.expense));
+        } else {
+          skipped++;
+          Logger.log('Skipped: ' + subject);
+        }
+      } catch (e) {
+        Logger.log('Error processing "' + subject + '": ' + e);
+      }
+    });
+
+    thread.addLabel(label);
+  });
+
+  Logger.log('Done. Saved: ' + saved + ', Skipped: ' + skipped);
+}
+
+// Manual test — run this to test a single thread
+function testLatest() {
+  const query = WATCHED_SENDERS.map(s => 'from:' + s).join(' OR ');
+  const threads = GmailApp.search(query + ' newer_than:7d', 0, 1);
+  if (!threads.length) { Logger.log('No matching emails found'); return; }
+
+  const msg = threads[0].getMessages()[0];
+  const text = 'From: ' + msg.getFrom() + '\nSubject: ' + msg.getSubject() + '\n\n' + msg.getPlainBody();
+  Logger.log('Testing with: ' + msg.getSubject());
+
+  const response = UrlFetchApp.fetch(WORKER_URL + '/api/ingest', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { Authorization: 'Bearer ' + INGEST_TOKEN },
+    payload: JSON.stringify({ text, source: 'gmail-test', paid_by: PAID_BY_DEFAULT }),
+    muteHttpExceptions: true,
+  });
+  Logger.log('Result: ' + response.getContentText());
+}

@@ -1,0 +1,13 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "expense-tracker",
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2025-06-01",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "expense-tracker-db",
+      "database_id": "72ceadd5-0c30-43eb-b107-0d7ca59455e8"
+    }
+  ]
+}
