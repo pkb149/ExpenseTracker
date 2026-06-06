@@ -354,8 +354,18 @@ function nextMonth(){
   load();
 }
 
+function resetChatUI(){
+  chatHistory=[];
+  document.getElementById('chat-messages').style.display='none';
+  document.getElementById('chat-messages').innerHTML='';
+  document.getElementById('chat-input-row').style.display='none';
+  document.getElementById('analyze-btn').style.display='block';
+  document.getElementById('chat-toolbar').style.display='none';
+}
+
 async function load(){
   document.getElementById('search-input').value='';
+  resetChatUI();
   const[y,m]=currentMonth.split('-');
   document.getElementById('month-label').textContent=MONTHS[parseInt(m)-1]+' '+y;
   try{
@@ -364,6 +374,7 @@ async function load(){
     refreshCategoryDropdowns();
     renderSummary();
     renderList();
+    restoreChat();
   }catch(e){console.error(e);}
 }
 
@@ -439,8 +450,38 @@ function renderSummary(){
 
 let chatHistory=[];
 
+function chatKey(){return 'et-chat-'+currentMonth;}
+
+function saveChatHistory(){
+  try{localStorage.setItem(chatKey(),JSON.stringify(chatHistory));}catch(e){}
+}
+
+function restoreChat(){
+  try{
+    const saved=localStorage.getItem(chatKey());
+    if(!saved)return;
+    chatHistory=JSON.parse(saved);
+    if(!chatHistory.length)return;
+    const el=document.getElementById('chat-messages');
+    el.innerHTML='';
+    chatHistory.forEach(function(m){
+      if(m.role==='user'&&m.content==="Give me 4-5 concise insights about this month's spending. Be direct.")return;
+      const div=document.createElement('div');
+      div.className='chat-msg '+m.role;
+      div.textContent=m.content;
+      el.appendChild(div);
+    });
+    el.style.display='flex';
+    el.scrollTop=el.scrollHeight;
+    document.getElementById('chat-input-row').style.display='flex';
+    document.getElementById('analyze-btn').style.display='none';
+    document.getElementById('chat-toolbar').style.display='flex';
+  }catch(e){}
+}
+
 function startChat(){
   chatHistory=[];
+  saveChatHistory();
   document.getElementById('chat-messages').style.display='flex';
   document.getElementById('chat-messages').innerHTML='';
   document.getElementById('chat-input-row').style.display='flex';
@@ -450,12 +491,8 @@ function startChat(){
 }
 
 function clearChat(){
-  chatHistory=[];
-  document.getElementById('chat-messages').style.display='none';
-  document.getElementById('chat-messages').innerHTML='';
-  document.getElementById('chat-input-row').style.display='none';
-  document.getElementById('analyze-btn').style.display='block';
-  document.getElementById('chat-toolbar').style.display='none';
+  try{localStorage.removeItem(chatKey());}catch(e){}
+  resetChatUI();
 }
 
 function sendChat(){
@@ -514,6 +551,7 @@ async function sendChatMessage(text){
       }
     }
     chatHistory.push({role:'assistant',content:assistantText});
+    saveChatHistory();
   }catch(e){
     assistantDiv.textContent='Error: '+e.message;
   }finally{
