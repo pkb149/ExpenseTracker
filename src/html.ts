@@ -396,15 +396,16 @@ function esc(s){const d=document.createElement('div');d.appendChild(document.cre
 function todayISO(){return new Date().toISOString().split('T')[0];}
 
 function renderSummary(){
-  const total=expenses.reduce((s,e)=>s+e.amount,0);
-  const pPaid=expenses.filter(e=>e.paid_by==='Prashant').reduce((s,e)=>s+e.amount,0);
-  const qPaid=expenses.filter(e=>e.paid_by==='Prayashi').reduce((s,e)=>s+e.amount,0);
-  const common=expenses.filter(e=>e.who_for==='Common').reduce((s,e)=>s+e.amount,0);
+  const nonSettle=expenses.filter(e=>e.category!=='Settlement');
+  const total=nonSettle.reduce((s,e)=>s+e.amount,0);
+  const pPaid=nonSettle.filter(e=>e.paid_by==='Prashant').reduce((s,e)=>s+e.amount,0);
+  const qPaid=nonSettle.filter(e=>e.paid_by==='Prayashi').reduce((s,e)=>s+e.amount,0);
+  const common=nonSettle.filter(e=>e.who_for==='Common').reduce((s,e)=>s+e.amount,0);
   document.getElementById('summary').innerHTML=
     card('Total','v-total',total)+card('Prashant paid','v-prashant',pPaid)+
     card('Prayashi paid','v-prayashi',qPaid)+card('Common','v-common',common);
 
-  // Settlement
+  // Settlement — uses ALL expenses including settlement payments so balance reflects them
   const cmnP=expenses.filter(e=>e.who_for==='Common'&&e.paid_by==='Prashant').reduce((s,e)=>s+e.amount,0);
   const cmnQ=expenses.filter(e=>e.who_for==='Common'&&e.paid_by==='Prayashi').reduce((s,e)=>s+e.amount,0);
   const totalCommon=cmnP+cmnQ;
@@ -420,7 +421,7 @@ function renderSummary(){
     const payee=net>0?'Prashant':'Prayashi';
     const clickable=!settled;
     document.getElementById('settlement-card').innerHTML=
-      '<div class="settle-card"'+(clickable?' data-net="'+netAmt+'" data-payer="'+payer+'" data-payee="'+payee+'" onclick="openSettleModal(+this.dataset.net,this.dataset.payer,this.dataset.payee)" style="cursor:pointer" title="Click to record settlement"':'')+'>'+
+      '<div class="settle-card"'+(clickable?' data-net="'+netAmt+'" data-payer="'+payer+'" data-payee="'+payee+'" data-month="'+currentMonth+'" onclick="openSettleModal(+this.dataset.net,this.dataset.payer,this.dataset.payee,this.dataset.month)" style="cursor:pointer" title="Click to record settlement"':'')+'>'+
         '<div class="settle-amount" style="color:'+color+'">'+who+(clickable?' &#x270F;':'')+'</div>'+
         '<div class="settle-detail">Common &#x20B9;'+fmt(totalCommon)+
           ' &nbsp;·&nbsp; Prashant paid &#x20B9;'+fmt(cmnP)+
@@ -433,7 +434,7 @@ function renderSummary(){
 
   // Category bars
   const byCat={};
-  expenses.forEach(e=>{byCat[e.category]=(byCat[e.category]||0)+e.amount;});
+  nonSettle.forEach(e=>{byCat[e.category]=(byCat[e.category]||0)+e.amount;});
   const sorted=Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
   if(sorted.length){
     const maxAmt=sorted[0][1]||1;
@@ -762,11 +763,11 @@ function ensureCategoryOption(selectId,value){
 
 load();
 
-let settleNet=0,settlePayer='',settlePayee='';
+let settleNet=0,settlePayer='',settlePayee='',settleMonth='';
 
-function openSettleModal(net,payer,payee){
-  settleNet=net; settlePayer=payer; settlePayee=payee;
-  document.getElementById('settle-title').textContent=payer+' owes '+payee+' ₹'+fmt(net);
+function openSettleModal(net,payer,payee,month){
+  settleNet=net; settlePayer=payer; settlePayee=payee; settleMonth=month;
+  document.getElementById('settle-title').textContent=payer+' owes '+payee+' ₹'+fmt(net)+' ('+month+')';
   document.getElementById('settle-full-btn').textContent='Record full ₹'+fmt(net);
   document.getElementById('settle-amount').value=String(Math.round(net));
   document.getElementById('settle-overlay').style.display='flex';
@@ -775,13 +776,16 @@ function openSettleModal(net,payer,payee){
 async function recordSettlement(partial){
   const amt=partial?parseFloat(document.getElementById('settle-amount').value):settleNet;
   if(!amt||amt<=0)return;
+  const[y,m]=settleMonth.split('-');
+  const lastDay=new Date(+y,+m,0).getDate();
+  const date=settleMonth+'-'+String(lastDay).padStart(2,'0');
   await fetch('/api/expenses',{
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({
       description:'Settlement: '+settlePayer+' paid '+settlePayee,
       amount:amt,
-      date:todayISO(),
+      date:date,
       paid_by:settlePayer,
       who_for:'Common',
       category:'Settlement',
