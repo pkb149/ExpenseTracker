@@ -28,7 +28,7 @@ const WATCHED_SENDERS = [
   'no-reply@bigbasket.com',
   'orders@bigbasket.com',
   'noreply@savana.in',
-  'care@savana.in',
+  'update@savana.in',
   'alerts@hdfcbank.com',
   'alerts@icicibank.com',
   'alerts@axisbank.com',
@@ -65,14 +65,15 @@ function pollGmail() {
       const body = msg.getPlainBody() || msg.getBody().replace(/<[^>]+>/g, ' ');
       const subject = msg.getSubject();
       const from = msg.getFrom();
-      const text = 'From: ' + from + '\nSubject: ' + subject + '\n\n' + body;
+      const receivedDate = Utilities.formatDate(msg.getDate(), 'Asia/Kolkata', 'yyyy-MM-dd');
+      const text = 'From: ' + from + '\nSubject: ' + subject + '\nEmail received: ' + receivedDate + '\n\n' + body;
 
       try {
         const response = UrlFetchApp.fetch(WORKER_URL + '/api/ingest', {
           method: 'post',
           contentType: 'application/json',
           headers: { Authorization: 'Bearer ' + INGEST_TOKEN },
-          payload: JSON.stringify({ text, source: 'gmail', paid_by: PAID_BY_DEFAULT }),
+          payload: JSON.stringify({ text, source: 'gmail', paid_by: PAID_BY_DEFAULT, received_date: receivedDate }),
           muteHttpExceptions: true,
         });
 
@@ -102,7 +103,8 @@ function testLatest() {
   if (!threads.length) { Logger.log('No matching emails found'); return; }
 
   const msg = threads[0].getMessages()[0];
-  const text = 'From: ' + msg.getFrom() + '\nSubject: ' + msg.getSubject() + '\n\n' + msg.getPlainBody();
+  const receivedDate = Utilities.formatDate(msg.getDate(), 'Asia/Kolkata', 'yyyy-MM-dd');
+  const text = 'From: ' + msg.getFrom() + '\nSubject: ' + msg.getSubject() + '\nEmail received: ' + receivedDate + '\n\n' + msg.getPlainBody();
   Logger.log('Testing with: ' + msg.getSubject());
 
   const response = UrlFetchApp.fetch(WORKER_URL + '/api/ingest', {

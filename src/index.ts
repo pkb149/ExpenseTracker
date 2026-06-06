@@ -300,13 +300,16 @@ app.post('/api/ingest', async (c) => {
   const token = c.req.header('Authorization')?.replace('Bearer ', '')
   if (token !== c.env.INGEST_TOKEN) return c.json({ error: 'Unauthorized' }, 401)
 
-  const body = await c.req.json<{ text: string; source?: string; paid_by?: string }>()
+  const body = await c.req.json<{ text: string; source?: string; paid_by?: string; received_date?: string }>()
   if (!body.text?.trim()) return c.json({ error: 'text required' }, 400)
 
   if (!c.env.OPENROUTER_API_KEY) return c.json({ error: 'OPENROUTER_API_KEY not set' }, 500)
 
   const today = new Date().toISOString().split('T')[0]
-  const prompt = `You are parsing an automated expense feed (email receipt or UPI SMS). Today is ${today}.
+  const dateHint = body.received_date
+    ? `The email was received on ${body.received_date} — use this as the expense date unless the email explicitly states a different transaction/order date.`
+    : `Today is ${today}.`
+  const prompt = `You are parsing an automated expense feed (email receipt or UPI SMS). ${dateHint}
 
 Text: """
 ${body.text.slice(0, 3000)}
