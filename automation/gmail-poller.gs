@@ -23,7 +23,7 @@ const WATCHED_SENDERS = [
   'receipts@uber.com',
   'order-confirm@sheinindia.in',
   'ship-confirm@sheinindia.in',
-  'refund-confirm@sheinindia.in'
+  'refund-confirm@sheinindia.in',
   'email@uber.com',
   'noreply@myntra.com',
   'refunds@myntra.com',
