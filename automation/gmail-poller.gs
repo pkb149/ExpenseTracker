@@ -54,8 +54,14 @@ function setup() {
 
 function pollGmail() {
   const label = GmailApp.getUserLabelByName(LABEL_NAME) || GmailApp.createLabel(LABEL_NAME);
-  const query = WATCHED_SENDERS.map(s => 'from:' + s).join(' OR ');
-  const threads = GmailApp.search('(' + query + ') -label:' + LABEL_NAME + ' newer_than:2h');
+  const senderQuery = WATCHED_SENDERS.map(s => 'from:' + s).join(' OR ');
+  const keywordQuery = 'subject:(order OR invoice OR payment OR refund OR "order confirmed" OR "order placed" OR "amount debited" OR "amount credited" OR "successfully paid") -label:' + LABEL_NAME + ' newer_than:2h';
+  const seen = new Set();
+  const allThreads = [
+    ...GmailApp.search('(' + senderQuery + ') -label:' + LABEL_NAME + ' newer_than:2h'),
+    ...GmailApp.search(keywordQuery),
+  ].filter(t => { if(seen.has(t.getId()))return false; seen.add(t.getId()); return true; });
+  const threads = allThreads;
 
   let saved = 0;
   let skipped = 0;
@@ -78,9 +84,9 @@ function pollGmail() {
         });
 
         const result = JSON.parse(response.getContentText());
-        if (result.saved) {
+        if (result.pending) {
           saved++;
-          Logger.log('Saved: ' + JSON.stringify(result.expense));
+          Logger.log('Queued: ' + JSON.stringify(result.expense));
         } else {
           skipped++;
           Logger.log('Skipped: ' + subject);
