@@ -21,6 +21,9 @@ const WATCHED_SENDERS = [
   'noreply@zomato.com',
   'orders@zomato.com',
   'receipts@uber.com',
+  'order-confirm@sheinindia.in',
+  'ship-confirm@sheinindia.in',
+  'refund-confirm@sheinindia.in'
   'email@uber.com',
   'noreply@myntra.com',
   'refunds@myntra.com',
@@ -105,7 +108,7 @@ function pollGmail() {
 // Manual test — run this to test a single thread
 function testLatest() {
   const query = WATCHED_SENDERS.map(s => 'from:' + s).join(' OR ');
-  const threads = GmailApp.search(query + ' newer_than:7d', 0, 1);
+  const threads = GmailApp.search(query + ' newer_than:37d', 0, 1);
   if (!threads.length) { Logger.log('No matching emails found'); return; }
 
   const msg = threads[0].getMessages()[0];

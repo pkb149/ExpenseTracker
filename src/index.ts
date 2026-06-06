@@ -326,7 +326,8 @@ If this is a REFUND, CANCELLATION, or CASHBACK where money is returned to the us
   "date": "<YYYY-MM-DD, use refund/credit date>",
   "paid_by": "${body.paid_by ?? 'Prashant'}",
   "category": "<same category as original purchase>",
-  "who_for": "<Prashant|Prayashi|Common>"
+  "who_for": "<Prashant|Prayashi|Common>",
+  "order_id": "<order/transaction/booking ID if found, else null>"
 }
 
 If a normal expense:
@@ -336,7 +337,8 @@ If a normal expense:
   "date": "<YYYY-MM-DD>",
   "paid_by": "${body.paid_by ?? 'Prashant'}",
   "category": "<best fit or new concise category>",
-  "who_for": "<Prashant|Prayashi|Common>"
+  "who_for": "<Prashant|Prayashi|Common>",
+  "order_id": "<order/transaction/booking ID if found in email, else null>"
 }
 
 Category hints: Swiggy/Zomato→Food, Uber/Ola→Travel, Amazon/Myntra/Savana/Meesho→Shopping, recurring/subscription→Subscription, Instamart/BigBasket/grocery→Groceries.
@@ -364,9 +366,24 @@ If amount not found in a refund email, still return the refund with best-guess a
 
   if (parsed.skip) return c.json({ skipped: true, reason: 'Not an expense or amount missing' })
 
+  // Dedup: order_id match OR same amount within 7 days in pending or expenses
+  if (parsed.order_id) {
+    const { results: dup } = await c.env.DB.prepare(
+      'SELECT id FROM pending_expenses WHERE order_id=? UNION SELECT id FROM expenses WHERE order_id=?'
+    ).bind(parsed.order_id, parsed.order_id).all()
+    if (dup.length) return c.json({ skipped: true, reason: 'Duplicate order_id' })
+  } else {
+    const d = parsed.date as string
+    const { results: dup } = await c.env.DB.prepare(
+      `SELECT id FROM pending_expenses WHERE ABS(amount-?) < 0.01 AND date >= date(?,'-7 days') AND date <= date(?,'+7 days')
+       UNION SELECT id FROM expenses WHERE ABS(amount-?) < 0.01 AND date >= date(?,'-7 days') AND date <= date(?,'+7 days')`
+    ).bind(parsed.amount, d, d, parsed.amount, d, d).all()
+    if (dup.length) return c.json({ skipped: true, reason: 'Likely duplicate: same amount within 7 days' })
+  }
+
   const { meta } = await c.env.DB.prepare(
-    'INSERT INTO pending_expenses (description,amount,date,paid_by,category,who_for,is_marriage_related,source,raw_input) VALUES (?,?,?,?,?,?,0,?,?)'
-  ).bind(parsed.description, parsed.amount, parsed.date, parsed.paid_by, parsed.category, parsed.who_for, body.source ?? 'ingest', body.text.slice(0, 1000)).run()
+    'INSERT INTO pending_expenses (description,amount,date,paid_by,category,who_for,is_marriage_related,source,raw_input,order_id) VALUES (?,?,?,?,?,?,0,?,?,?)'
+  ).bind(parsed.description, parsed.amount, parsed.date, parsed.paid_by, parsed.category, parsed.who_for, body.source ?? 'ingest', body.text.slice(0, 1000), parsed.order_id ?? null).run()
 
   return c.json({ pending: true, id: meta.last_row_id, expense: parsed })
 })

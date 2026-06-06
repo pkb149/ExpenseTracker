@@ -26,5 +26,6 @@ CREATE TABLE IF NOT EXISTS pending_expenses (
   is_marriage_related INTEGER NOT NULL DEFAULT 0,
   source TEXT NOT NULL DEFAULT 'ingest',
   raw_input TEXT,
+  order_id TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
