@@ -418,9 +418,10 @@ function renderSummary(){
     const netAmt=Math.abs(net);
     const payer=net>0?'Prayashi':'Prashant';
     const payee=net>0?'Prashant':'Prayashi';
+    const clickable=!settled;
     document.getElementById('settlement-card').innerHTML=
-      '<div class="settle-card" style="cursor:'+(settled?'default':'pointer')+'" onclick="'+(settled?'':'openSettleModal('+netAmt+',"'+payer+'","'+payee+'")')+'" title="'+(settled?'':'Click to record settlement')+'">'+
-        '<div class="settle-amount" style="color:'+color+'">'+who+(settled?'':' &#x270F;')+'</div>'+
+      '<div class="settle-card"'+(clickable?' data-net="'+netAmt+'" data-payer="'+payer+'" data-payee="'+payee+'" onclick="openSettleModal(+this.dataset.net,this.dataset.payer,this.dataset.payee)" style="cursor:pointer" title="Click to record settlement"':'')+'>'+
+        '<div class="settle-amount" style="color:'+color+'">'+who+(clickable?' &#x270F;':'')+'</div>'+
         '<div class="settle-detail">Common &#x20B9;'+fmt(totalCommon)+
           ' &nbsp;·&nbsp; Prashant paid &#x20B9;'+fmt(cmnP)+
           ' &nbsp;·&nbsp; Prayashi paid &#x20B9;'+fmt(cmnQ)+'</div>'+
