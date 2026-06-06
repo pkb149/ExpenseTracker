@@ -4,8 +4,9 @@
   "private": true,
   "scripts": {
     "build": "esbuild src/index.ts --bundle --outfile=dist/_worker.js --format=esm --target=es2022 --external:node:*",
-    "dev": "npm run build && wrangler pages dev dist",
-    "deploy": "npm run build && wrangler pages deploy dist",
+    "check": "node scripts/check-js.js",
+    "dev": "npm run build && npm run check && wrangler pages dev dist",
+    "deploy": "npm run build && npm run check && wrangler pages deploy dist",
     "types": "wrangler types"
   },
   "dependencies": {

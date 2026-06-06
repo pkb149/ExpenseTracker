@@ -127,7 +127,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 <body>
 
 <header class="header">
-  <h1>Expense Tracker</h1>
+  <h1 onclick="currentMonth=(()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');})();load();" style="cursor:pointer">Expense Tracker</h1>
   <div style="display:flex;gap:.5rem;align-items:center">
     <button class="pending-btn" onclick="openPendingModal()" id="pending-btn">
       Review <span class="badge-count" id="pending-count">0</span>
@@ -172,6 +172,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
   <div class="section-title">AI Analysis</div>
   <div class="card">
     <div class="chat-panel">
+      <div style="display:none;justify-content:flex-end;margin-bottom:.25rem" id="chat-toolbar">
+        <button style="background:none;border:none;font-size:.75rem;color:var(--muted);cursor:pointer" onclick="clearChat()">Clear chat</button>
+      </div>
       <div class="chat-messages" id="chat-messages" style="display:none"></div>
       <button class="btn btn-primary btn-block" id="analyze-btn" onclick="startChat()">&#x2728; Analyze this month</button>
       <div class="chat-input-row" id="chat-input-row" style="display:none">
@@ -352,11 +355,6 @@ function nextMonth(){
 }
 
 async function load(){
-  chatHistory=[];
-  document.getElementById('chat-messages').style.display='none';
-  document.getElementById('chat-messages').innerHTML='';
-  document.getElementById('chat-input-row').style.display='none';
-  document.getElementById('analyze-btn').style.display='block';
   document.getElementById('search-input').value='';
   const[y,m]=currentMonth.split('-');
   document.getElementById('month-label').textContent=MONTHS[parseInt(m)-1]+' '+y;
@@ -427,7 +425,7 @@ function renderSummary(){
     document.getElementById('cat-breakdown').innerHTML=sorted.map(([c,a])=>{
       const pct=total>0?Math.round((a/total)*100):0;
       const barW=Math.round((a/maxAmt)*100);
-      return'<div class="cat-row">'+
+      return'<div class="cat-row" style="cursor:pointer" onclick="filterCat(this.dataset.cat)" data-cat="'+esc(c)+'">'+
         '<span class="cat-name">'+esc(c)+'</span>'+
         '<div class="cat-bar-wrap"><div class="cat-bar" style="width:'+barW+'%"></div></div>'+
         '<span class="cat-right">&#x20B9;'+fmt(a)+'<span class="cat-pct">'+pct+'%</span></span>'+
@@ -447,7 +445,17 @@ function startChat(){
   document.getElementById('chat-messages').innerHTML='';
   document.getElementById('chat-input-row').style.display='flex';
   document.getElementById('analyze-btn').style.display='none';
-  sendChatMessage('Give me 4-5 concise insights about this month\'s spending. Be direct.');
+  document.getElementById('chat-toolbar').style.display='flex';
+  sendChatMessage("Give me 4-5 concise insights about this month's spending. Be direct.");
+}
+
+function clearChat(){
+  chatHistory=[];
+  document.getElementById('chat-messages').style.display='none';
+  document.getElementById('chat-messages').innerHTML='';
+  document.getElementById('chat-input-row').style.display='none';
+  document.getElementById('analyze-btn').style.display='block';
+  document.getElementById('chat-toolbar').style.display='none';
 }
 
 function sendChat(){
@@ -470,7 +478,7 @@ function appendChatMsg(role,content){
 
 async function sendChatMessage(text){
   chatHistory.push({role:'user',content:text});
-  if(text!=='Give me 4-5 concise insights about this month\'s spending. Be direct.'){
+  if(text!=="Give me 4-5 concise insights about this month's spending. Be direct."){
     appendChatMsg('user',text);
   }
   const assistantDiv=appendChatMsg('assistant','');
@@ -492,7 +500,7 @@ async function sendChatMessage(text){
       const{done,value}=await reader.read();
       if(done)break;
       buffer+=decoder.decode(value,{stream:true});
-      const lines=buffer.split('\n');
+      const lines=buffer.split('\\n');
       buffer=lines.pop();
       for(const line of lines){
         if(!line.startsWith('data: '))continue;
@@ -512,6 +520,12 @@ async function sendChatMessage(text){
     if(input)input.disabled=false;
     if(input)input.focus();
   }
+}
+
+function filterCat(cat){
+  const inp=document.getElementById('search-input');
+  inp.value=cat;
+  filterExpenses(cat);
 }
 
 function filterExpenses(q){
