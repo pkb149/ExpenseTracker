@@ -355,7 +355,6 @@ function nextMonth(){
 }
 
 function resetChatUI(){
-  if(chatAbort){chatAbort.abort();chatAbort=null;}
   chatHistory=[];
   document.getElementById('chat-messages').style.display='none';
   document.getElementById('chat-messages').innerHTML='';
@@ -450,13 +449,8 @@ function renderSummary(){
 }
 
 let chatHistory=[];
-let chatAbort=null;
 
 function chatKey(){return 'et-chat-'+currentMonth;}
-
-function saveChatHistory(){
-  try{localStorage.setItem(chatKey(),JSON.stringify(chatHistory));}catch(e){}
-}
 
 function restoreChat(){
   try{
@@ -516,21 +510,21 @@ function appendChatMsg(role,content){
 }
 
 async function sendChatMessage(text){
-  chatHistory.push({role:'user',content:text});
+  const month=currentMonth;
+  const history=chatHistory;
+  history.push({role:'user',content:text});
   if(text!=="Give me 4-5 concise insights about this month's spending. Be direct."){
     appendChatMsg('user',text);
   }
   const assistantDiv=appendChatMsg('assistant','');
   const input=document.getElementById('chat-input');
   if(input)input.disabled=true;
-  chatAbort=new AbortController();
 
   try{
     const res=await fetch('/api/chat',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({month:currentMonth,messages:chatHistory}),
-      signal:chatAbort.signal
+      body:JSON.stringify({month,messages:history})
     });
     const reader=res.body.getReader();
     const decoder=new TextDecoder();
@@ -554,14 +548,13 @@ async function sendChatMessage(text){
         }catch(e){}
       }
     }
-    chatHistory.push({role:'assistant',content:assistantText});
-    saveChatHistory();
+    history.push({role:'assistant',content:assistantText});
+    try{localStorage.setItem('et-chat-'+month,JSON.stringify(history));}catch(e){}
   }catch(e){
-    if(e.name!=='AbortError')assistantDiv.textContent='Error: '+e.message;
+    if(assistantDiv.isConnected)assistantDiv.textContent='Error: '+e.message;
   }finally{
-    chatAbort=null;
     if(input)input.disabled=false;
-    if(input)input.focus();
+    if(input&&input.isConnected)input.focus();
   }
 }
 
