@@ -398,7 +398,7 @@ function esc(s){const d=document.createElement('div');d.appendChild(document.cre
 function todayISO(){return new Date().toISOString().split('T')[0];}
 
 function renderSummary(){
-  const nonSettle=expenses.filter(e=>e.category!=='Settlement');
+  const nonSettle=expenses.filter(e=>e.category!=='Settlement'&&!String(e.category).startsWith('wallet_'));
   const total=nonSettle.reduce((s,e)=>s+e.amount,0);
   const pPaid=nonSettle.filter(e=>e.paid_by==='Prashant').reduce((s,e)=>s+e.amount,0);
   const qPaid=nonSettle.filter(e=>e.paid_by==='Prayashi').reduce((s,e)=>s+e.amount,0);

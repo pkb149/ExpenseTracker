@@ -345,7 +345,8 @@ If a normal expense:
 Category hints: Swiggy/Zomato→Food, Uber/Ola→Travel, Amazon/Myntra/Savana/Meesho→Shopping, recurring/subscription→Subscription, Instamart/BigBasket/grocery→Groceries.
 who_for hints: food order for one person→that person, groceries/household→Common, fashion item for one person→that person, unclear→Common.
 If amount not found in a refund email, still return the refund with best-guess amount if inferable, else {"skip": true}.
-IMPORTANT: Always use the ORDER TOTAL amount, never individual item prices. If this email is a per-item breakdown or shipping update with no order total, return {"skip": true}. Prefer order confirmation emails over item-level emails.`
+IMPORTANT: Always use the ORDER TOTAL amount, never individual item prices. If this email is a per-item breakdown or shipping update with no order total, return {"skip": true}. Prefer order confirmation emails over item-level emails.
+WALLET PAYMENTS: If the payment was made using Amazon Pay wallet balance, Amazon Pay Later, or any wallet/prepaid balance (not UPI/card/netbanking), prefix the category with "wallet_" (e.g. "wallet_Shopping", "wallet_Groceries"). These are wallet spend-downs, not real cash outflows.`
 
   const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
