@@ -107,6 +107,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .search-icon{position:absolute;left:1.5rem;top:50%;transform:translateY(-50%);color:var(--muted);font-size:.9rem;pointer-events:none}
 .pending-btn{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);padding:.3rem .65rem;border-radius:.375rem;font-size:.8125rem;cursor:pointer;display:flex;align-items:center;gap:.35rem}
 .pending-btn:hover{background:rgba(255,255,255,.25)}
+.stmt-card{background:var(--card);border-radius:.625rem;padding:.875rem;margin-bottom:.625rem;box-shadow:var(--shadow);border-left:3px solid #f59e0b}
+.stmt-card .exp-desc{font-weight:600;font-size:.9375rem}
+.stmt-meta{font-size:.7rem;color:var(--muted);margin-top:.15rem}
+.stmt-pw{display:flex;gap:.5rem;margin-top:.75rem;align-items:center}
+.stmt-pw input{flex:1;padding:.45rem .625rem;border:1.5px solid var(--border);border-radius:.4rem;font-size:.875rem}
+.stmt-pw input:focus{outline:none;border-color:var(--primary)}
 .badge-count{background:#ef4444;color:#fff;border-radius:9999px;font-size:.65rem;font-weight:700;padding:.1rem .4rem;min-width:1.1rem;text-align:center;display:none}
 .pending-card{background:var(--card);border-radius:.625rem;padding:.875rem;margin-bottom:.625rem;box-shadow:var(--shadow);border-left:3px solid var(--primary)}
 .pending-card .exp-desc{font-weight:600;font-size:.9375rem}
@@ -129,6 +135,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 <header class="header">
   <h1 onclick="currentMonth=(()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');})();pushMonth();load();" style="cursor:pointer">Expense Tracker</h1>
   <div style="display:flex;gap:.5rem;align-items:center">
+    <button class="pending-btn" onclick="openStmtModal()" id="stmt-btn" style="display:none;border-color:rgba(245,158,11,.6);background:rgba(245,158,11,.2)">
+      &#x1F512; <span id="stmt-count">0</span>
+    </button>
     <button class="pending-btn" onclick="openPendingModal()" id="pending-btn">
       Review <span class="badge-count" id="pending-count">0</span>
     </button>
@@ -322,6 +331,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
   </div>
 </div>
 
+<div class="overlay" id="stmt-overlay">
+  <div class="modal" style="max-height:92vh">
+    <div class="modal-hdr">
+      <div class="modal-title">&#x1F512; Statements Needing Password</div>
+      <button class="modal-close" onclick="closeStmtModal()">&times;</button>
+    </div>
+    <div id="stmt-list"><div class="empty"><div class="empty-icon">&#x2705;</div><div>No statements pending</div></div></div>
+  </div>
+</div>
+
 <script>
 const MONTHS=['January','February','March','April','May','June','July','August','September','October','November','December'];
 const DEFAULT_CATS=['Food','Travel','Subscription','Shopping','Rent','Medical','Entertainment','Utilities','Groceries','Education','Insurance','EMI','Personal Care','Gifts','Other'];
@@ -330,6 +349,7 @@ let currentMonth=(()=>{const p=new URLSearchParams(location.search).get('m');if(
 let expenses=[];
 let editingId=null;
 let fabOpen=false;
+let pendingStmts=[];
 
 function toggleFab(){
   fabOpen=!fabOpen;
@@ -881,6 +901,68 @@ async function approveAll(){
 
 loadPendingCount();
 setInterval(loadPendingCount,5*60*1000);
+
+async function loadStmtCount(){
+  try{
+    const res=await fetch('/api/pending-statements');
+    pendingStmts=await res.json();
+    const btn=document.getElementById('stmt-btn');
+    if(pendingStmts.length){
+      document.getElementById('stmt-count').textContent=pendingStmts.length;
+      btn.style.display='flex';
+    }else{
+      btn.style.display='none';
+    }
+  }catch(e){}
+}
+
+function openStmtModal(){
+  renderStmtList();
+  document.getElementById('stmt-overlay').classList.add('open');
+}
+function closeStmtModal(){document.getElementById('stmt-overlay').classList.remove('open');}
+
+function renderStmtList(){
+  const el=document.getElementById('stmt-list');
+  if(!pendingStmts.length){
+    el.innerHTML='<div class="empty"><div class="empty-icon">&#x2705;</div><div>No statements pending</div></div>';
+    return;
+  }
+  el.innerHTML=pendingStmts.map(function(s){
+    var dt=s.created_at?s.created_at.slice(0,10):'';
+    return '<div class="stmt-card" id="sc-'+s.id+'">'+
+      '<div class="exp-desc">'+esc(s.bank)+' Statement</div>'+
+      '<div class="stmt-meta">'+esc(s.filename||'unknown.pdf')+' &middot; received '+dt+' &middot; '+esc(s.paid_by)+'</div>'+
+      '<div class="stmt-pw">'+
+        '<input type="password" id="spw-'+s.id+'" placeholder="Enter PDF password" autocomplete="off">'+
+        '<button class="btn btn-primary" style="font-size:.8125rem;padding:.45rem .75rem;white-space:nowrap" onclick="unlockStmt('+s.id+')">Unlock</button>'+
+      '</div>'+
+      '<div id="smsg-'+s.id+'" style="font-size:.75rem;margin-top:.35rem;color:var(--muted)"></div>'+
+    '</div>';
+  }).join('');
+}
+
+async function unlockStmt(id){
+  const pw=document.getElementById('spw-'+id).value.trim();
+  const msg=document.getElementById('smsg-'+id);
+  if(!pw){msg.textContent='Enter password first';msg.style.color='#ef4444';return;}
+  msg.textContent='Processing...';msg.style.color='var(--muted)';
+  try{
+    const res=await fetch('/api/pending-statements/'+id+'/unlock',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({password:pw})
+    });
+    const r=await res.json();
+    if(!res.ok){msg.textContent=r.error||'Failed';msg.style.color='#ef4444';return;}
+    msg.textContent='Done — '+r.new_pending+' new, '+r.matched+' already matched';
+    msg.style.color='#16a34a';
+    pendingStmts=pendingStmts.filter(function(s){return s.id!==id;});
+    setTimeout(function(){renderStmtList();loadStmtCount();loadPendingCount();},1500);
+  }catch(e){msg.textContent='Network error';msg.style.color='#ef4444';}
+}
+
+loadStmtCount();
+setInterval(loadStmtCount,5*60*1000);
 load();
 </script>
 

@@ -27,5 +27,24 @@ CREATE TABLE IF NOT EXISTS pending_expenses (
   source TEXT NOT NULL DEFAULT 'ingest',
   raw_input TEXT,
   order_id TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS pending_statements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  bank TEXT NOT NULL,
+  filename TEXT,
+  paid_by TEXT NOT NULL DEFAULT 'Prashant',
+  pdf_data BLOB NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS statement_imports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  bank TEXT NOT NULL,
+  total_transactions INTEGER NOT NULL DEFAULT 0,
+  matched INTEGER NOT NULL DEFAULT 0,
+  new_pending INTEGER NOT NULL DEFAULT 0,
+  imported_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

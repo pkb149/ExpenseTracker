@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { getHTML } from './html'
+import { extractText } from 'unpdf'
 
 const ALLOWED_EMAILS = new Set(['prashantkumarbharadwaj@gmail.com', 'prayashikumari2@gmail.com'])
 
@@ -13,6 +14,7 @@ type Bindings = {
   SESSION_SECRET: string
   INGEST_TOKEN: string
   API_KEY: string
+  PDF_PASSWORDS: string  // JSON: {"HDFC":"pass","ICICI":"pass"}
 }
 
 function b64url(buf: Uint8Array | ArrayBuffer): string {
@@ -72,7 +74,7 @@ app.use('/api/*', cors())
 
 app.use('*', async (c, next) => {
   const path = new URL(c.req.url).pathname
-  if (path === '/login' || path.startsWith('/auth/') || path === '/privacy' || path === '/api/ingest') {
+  if (path === '/login' || path.startsWith('/auth/') || path === '/privacy' || path === '/api/ingest' || path === '/api/statement-upload' || path === '/api/statement-ingest') {
     return next()
   }
   const bearer = c.req.header('Authorization')?.replace('Bearer ', '')
@@ -391,9 +393,221 @@ WALLET PAYMENTS: If the payment was made using Amazon Pay wallet balance, Amazon
   return c.json({ pending: true, id: meta.last_row_id, expense: parsed })
 })
 
+type TxRow = { date: string; description: string; amount: number; category: string; who_for: string }
+
+async function reconcileStatement(
+  db: D1Database,
+  openrouterKey: string,
+  model: string,
+  bank: string,
+  text: string,
+  payer: string
+): Promise<{ total: number; matched: number; new_pending: number; skipped: number }> {
+  const today = new Date().toISOString().split('T')[0]
+  const prompt = `Extract all expense/debit transactions from this ${bank} bank or credit card statement. Today is ${today}.
+
+Statement text:
+"""
+${text.slice(0, 8000)}
+"""
+
+Return ONLY valid JSON: {"transactions": [...]}
+
+Each transaction:
+{
+  "date": "YYYY-MM-DD",
+  "description": "normalize to 'Brand - item' (e.g. 'Zomato - order', 'Amazon - order', 'Swiggy - order')",
+  "amount": <positive for debits/purchases, negative for refunds/reversals>,
+  "category": "<Food|Travel|Subscription|Shopping|Groceries|Medical|Utilities|Entertainment|EMI|Insurance|Personal Care|Rent|Other>",
+  "who_for": "<Prashant|Prayashi|Common>"
+}
+
+Skip: credit card bill payments, cash deposits, salary credits, interest charges, GST, bank fees, opening/closing balance, cheque returns.
+Include: all purchases, UPI debits, refunds (negative amount).
+Return {"transactions": []} if nothing qualifies.`
+
+  const llmRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${openrouterKey}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://expense-tracker-4er.pages.dev',
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: prompt }],
+      response_format: { type: 'json_object' },
+    }),
+  })
+
+  const llmData = await llmRes.json() as { choices?: { message?: { content?: string } }[] }
+  const content = llmData.choices?.[0]?.message?.content
+  let parsed: { transactions?: TxRow[] }
+  try { parsed = JSON.parse(content ?? '') } catch { throw new Error(`LLM parse failed: ${content?.slice(0, 200)}`) }
+
+  const transactions = parsed.transactions ?? []
+  let matched = 0, newPending = 0, skipped = 0
+
+  for (const tx of transactions) {
+    if (!tx.date || tx.amount == null || !tx.description) { skipped++; continue }
+
+    const { results: dup } = await db.prepare(`
+      SELECT id FROM expenses
+      WHERE ABS(amount - ?) < 0.01
+        AND date(date) BETWEEN date(?, '-3 days') AND date(?, '+3 days')
+      UNION
+      SELECT id FROM pending_expenses
+      WHERE ABS(amount - ?) < 0.01
+        AND date(date) BETWEEN date(?, '-3 days') AND date(?, '+3 days')
+        AND status != 'rejected'
+    `).bind(tx.amount, tx.date, tx.date, tx.amount, tx.date, tx.date).all()
+
+    if (dup.length) { matched++; continue }
+
+    await db.prepare(
+      'INSERT INTO pending_expenses (description,amount,date,paid_by,category,who_for,is_marriage_related,source,raw_input) VALUES (?,?,?,?,?,?,0,?,?)'
+    ).bind(
+      tx.description, tx.amount, tx.date, payer,
+      tx.category ?? 'Other', tx.who_for ?? 'Common',
+      `statement_${bank}`, text.slice(0, 500)
+    ).run()
+    newPending++
+  }
+
+  await db.prepare(
+    'INSERT INTO statement_imports (bank, total_transactions, matched, new_pending) VALUES (?,?,?,?)'
+  ).bind(bank, transactions.length, matched, newPending).run()
+
+  return { total: transactions.length, matched, new_pending: newPending, skipped }
+}
+
+app.post('/api/statement-ingest', async (c) => {
+  const token = c.req.header('Authorization')?.replace('Bearer ', '')
+  if (token !== c.env.INGEST_TOKEN) return c.json({ error: 'Unauthorized' }, 401)
+
+  const { bank, text, paid_by } = await c.req.json<{ bank: string; text: string; paid_by?: string }>()
+  if (!text?.trim()) return c.json({ error: 'text required' }, 400)
+  if (!bank?.trim()) return c.json({ error: 'bank required' }, 400)
+  if (!c.env.OPENROUTER_API_KEY) return c.json({ error: 'OPENROUTER_API_KEY not set' }, 500)
+
+  try {
+    const result = await reconcileStatement(
+      c.env.DB, c.env.OPENROUTER_API_KEY,
+      c.env.LLM_MODEL ?? 'openai/gpt-oss-120b:free',
+      bank, text, paid_by ?? 'Prashant'
+    )
+    return c.json(result)
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500)
+  }
+})
+
+app.post('/api/statement-upload', async (c) => {
+  const token = c.req.header('Authorization')?.replace('Bearer ', '')
+  if (token !== c.env.INGEST_TOKEN) return c.json({ error: 'Unauthorized' }, 401)
+
+  const { bank, pdf_base64, paid_by, filename } = await c.req.json<{ bank: string; pdf_base64: string; paid_by?: string; filename?: string }>()
+  if (!pdf_base64) return c.json({ error: 'pdf_base64 required' }, 400)
+  if (!bank?.trim()) return c.json({ error: 'bank required' }, 400)
+  if (!c.env.OPENROUTER_API_KEY) return c.json({ error: 'OPENROUTER_API_KEY not set' }, 500)
+
+  let passwords: Record<string, string> = {}
+  try { passwords = JSON.parse(c.env.PDF_PASSWORDS ?? '{}') } catch {}
+  const password = passwords[bank] ?? ''
+
+  const pdfBuffer = await fetch(`data:application/octet-stream;base64,${pdf_base64.replace(/[\s]/g, '')}`).then(r => r.arrayBuffer())
+  // Slice a copy now — pdfjs-dist transfers (detaches) the original buffer internally
+  const pdfStorageCopy = pdfBuffer.slice(0)
+  const pdfBytes = new Uint8Array(pdfBuffer)
+  if (!pdfBytes.length) return c.json({ error: 'pdf_base64 decoded to empty — invalid base64 input' }, 400)
+
+  let text: string
+  try {
+    const { text: pages } = await extractText(
+      password ? { data: pdfBytes, password } : pdfBytes
+    )
+    text = pages.join('\n')
+  } catch (e: any) {
+    const isPasswordError = e?.name === 'PasswordException' || String(e?.message ?? e).toLowerCase().includes('password')
+    if (isPasswordError) {
+      try {
+        const { meta } = await c.env.DB.prepare(
+          'INSERT INTO pending_statements (bank, filename, paid_by, pdf_data) VALUES (?,?,?,?)'
+        ).bind(bank, filename ?? null, paid_by ?? 'Prashant', pdfStorageCopy).run()
+        return c.json({ password_required: true, id: meta.last_row_id, bank, filename })
+      } catch (dbErr: any) {
+        return c.json({ error: `PDF needs password - D1 store failed: ${String(dbErr?.message ?? dbErr)} (${pdfBytes.length} bytes)` }, 400)
+      }
+    }
+    return c.json({ error: `PDF extraction failed: ${String(e?.message ?? e)}` }, 500)
+  }
+
+  if (!text.trim()) return c.json({ error: 'No text extracted from PDF (scanned image PDF?)' }, 400)
+
+  try {
+    const result = await reconcileStatement(
+      c.env.DB, c.env.OPENROUTER_API_KEY,
+      c.env.LLM_MODEL ?? 'openai/gpt-oss-120b:free',
+      bank, text, paid_by ?? 'Prashant'
+    )
+    return c.json(result)
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500)
+  }
+})
+
+app.get('/api/pending-statements', async (c) => {
+  const { results } = await c.env.DB.prepare(
+    'SELECT id, bank, filename, paid_by, created_at FROM pending_statements ORDER BY created_at DESC'
+  ).all()
+  return c.json(results)
+})
+
+app.post('/api/pending-statements/:id/unlock', async (c) => {
+  const id = c.req.param('id')
+  const { password } = await c.req.json<{ password: string }>()
+  if (!password) return c.json({ error: 'password required' }, 400)
+
+  const { results } = await c.env.DB.prepare(
+    'SELECT id, bank, filename, paid_by, pdf_data FROM pending_statements WHERE id=?'
+  ).bind(id).all()
+  if (!results.length) return c.json({ error: 'Not found' }, 404)
+
+  const row = results[0] as { bank: string; filename: string | null; paid_by: string; pdf_data: ArrayBuffer }
+  const pdfBytes = new Uint8Array(row.pdf_data)
+
+  let text: string
+  try {
+    const { text: pages } = await extractText({ data: pdfBytes, password })
+    text = pages.join('\n')
+  } catch (e: any) {
+    const msg = String(e?.message ?? e)
+    if (msg.includes('password') || msg.includes('PasswordException') || msg.includes('incorrect')) {
+      return c.json({ error: 'Wrong password' }, 400)
+    }
+    return c.json({ error: `PDF extraction failed: ${msg}` }, 500)
+  }
+
+  if (!text.trim()) return c.json({ error: 'No text extracted from PDF' }, 400)
+
+  if (!c.env.OPENROUTER_API_KEY) return c.json({ error: 'OPENROUTER_API_KEY not set' }, 500)
+
+  try {
+    const result = await reconcileStatement(
+      c.env.DB, c.env.OPENROUTER_API_KEY,
+      c.env.LLM_MODEL ?? 'openai/gpt-oss-120b:free',
+      row.bank, text, row.paid_by
+    )
+    await c.env.DB.prepare('DELETE FROM pending_statements WHERE id=?').bind(id).run()
+    return c.json(result)
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500)
+  }
+})
+
 app.get('/api/pending', async (c) => {
   const { results } = await c.env.DB.prepare(
-    'SELECT * FROM pending_expenses ORDER BY created_at DESC'
+    "SELECT * FROM pending_expenses WHERE status='pending' ORDER BY created_at DESC"
   ).all()
   return c.json(results)
 })
@@ -416,12 +630,12 @@ app.post('/api/pending/:id/approve', async (c) => {
     overrides.is_marriage_related !== undefined ? (overrides.is_marriage_related ? 1 : 0) : p.is_marriage_related,
     p.source, p.raw_input
   ).run()
-  await c.env.DB.prepare('DELETE FROM pending_expenses WHERE id=?').bind(id).run()
+  await c.env.DB.prepare("UPDATE pending_expenses SET status='approved' WHERE id=?").bind(id).run()
   return c.json({ ok: true, expense_id: meta.last_row_id })
 })
 
 app.delete('/api/pending/:id', async (c) => {
-  await c.env.DB.prepare('DELETE FROM pending_expenses WHERE id=?').bind(c.req.param('id')).run()
+  await c.env.DB.prepare("UPDATE pending_expenses SET status='rejected' WHERE id=?").bind(c.req.param('id')).run()
   return c.json({ ok: true })
 })
 

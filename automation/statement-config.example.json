@@ -1,0 +1,21 @@
+{
+  "api_url": "https://expense-tracker-4er.pages.dev",
+  "ingest_token": "YOUR_INGEST_TOKEN_HERE",
+  "credentials_file": "gmail-credentials.json",
+  "token_file": "gmail-token.json",
+
+  "passwords": {
+    "HDFC": "your_hdfc_pdf_password",
+    "ICICI": "your_icici_pdf_password",
+    "Axis": "your_axis_pdf_password",
+    "SBI": "your_sbi_pdf_password",
+    "Kotak": "your_kotak_pdf_password"
+  },
+
+  "default_paid_by": {
+    "HDFC": "Prashant",
+    "ICICI": "Prayashi",
+    "Axis": "Prashant"
+  },
+  "default_paid_by_fallback": "Prashant"
+}
