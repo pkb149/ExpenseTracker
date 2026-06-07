@@ -929,10 +929,11 @@ function renderStmtList(){
     return;
   }
   el.innerHTML=pendingStmts.map(function(s){
-    var dt=s.created_at?s.created_at.slice(0,10):'';
+    var dt=s.email_date||s.created_at.slice(0,10);
+    var label=s.bank!=='Unknown'?s.bank+' Statement':(s.filename||'unknown.pdf');
     return '<div class="stmt-card" id="sc-'+s.id+'">'+
-      '<div class="exp-desc">'+esc(s.bank)+' Statement</div>'+
-      '<div class="stmt-meta">'+esc(s.filename||'unknown.pdf')+' &middot; received '+dt+' &middot; '+esc(s.paid_by)+'</div>'+
+      '<div class="exp-desc">'+esc(label)+'</div>'+
+      '<div class="stmt-meta">received '+dt+' &middot; '+esc(s.paid_by)+'</div>'+
       '<div class="stmt-pw">'+
         '<input type="password" id="spw-'+s.id+'" placeholder="Enter PDF password" autocomplete="off">'+
         '<button class="btn btn-primary" style="font-size:.8125rem;padding:.45rem .75rem;white-space:nowrap" onclick="unlockStmt('+s.id+')">Unlock</button>'+

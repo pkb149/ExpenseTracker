@@ -6,13 +6,70 @@
 - OpenRouter for LLM (parse & analyze endpoints)
 - Deployed at: `https://expense-tracker-4er.pages.dev`
 
-## Source files
-- `src/index.ts` — all routes and middleware
-- `src/html.ts` — full frontend SPA (vanilla JS, inline `<script>` in HTML template literal)
-- `schema.sql` — D1 schema
-- `wrangler.jsonc` — Wrangler config
-- `scripts/check-js.js` — syntax-checks the inline `<script>` block post-build
-- `scripts/cdp-screenshot.js` — Playwright via CDP for real-session debugging
+## File ownership — which file to edit for each change
+
+### `src/index.ts` (~679 lines) — server-side only
+All Hono routes, middleware, auth, DB queries, LLM calls. Touch this for:
+- Any API route (`/api/*`, `/auth/*`, `/login`, `/privacy`)
+- Auth logic (Google OAuth flow, session cookie, allowed-email check)
+- DB reads/writes (expenses, pending_expenses tables)
+- LLM prompt changes (`/api/parse` — SMS/email parsing, `/api/analyze` — AI insights)
+- Gmail ingest logic (`/api/ingest`) — deduplication, wallet_ prefix logic, skip conditions
+- CSV export (`/api/export`)
+- Pending queue approval/skip/list (`/api/pending/*`)
+- Settlement recording (writes a `Settlement` category expense to DB)
+- Chat streaming (`/api/chat`)
+- OpenAPI spec (`/api/openapi.json`)
+
+Key route→line map:
+| Route | Line |
+|-------|------|
+| `GET /api/expenses` | 169 |
+| `POST /api/expenses` | 178 |
+| `PUT /api/expenses/:id` | 186 |
+| `DELETE /api/expenses/:id` | 194 |
+| `POST /api/parse` | 199 |
+| `GET /api/export` | 256 |
+| `POST /api/ingest` | 299 |
+| `GET /api/pending` | 394 |
+| `POST /api/pending/:id/approve` | 401 |
+| `DELETE /api/pending/:id` | 423 |
+| `GET /api/categories` | 428 |
+| `POST /api/chat` | 438 |
+| `GET /api/analyze` | 492 |
+
+### `src/html.ts` (~903 lines) — frontend only
+Entire SPA: CSS (lines 8–220), HTML markup (lines 221–330), inline `<script>` (lines ~331–900). Touch this for:
+- Any visual/UI change (layout, colors, cards, buttons)
+- Month navigation (`prevMonth`/`nextMonth` ~348, `pushMonth` ~346)
+- Summary cards with totals (`renderSummary` ~400) — Prashant/Prayashi/Common/Total spend
+- Settlement card display + click-to-settle (`openSettleModal` ~773, `recordSettlement` ~781)
+- Expense list rendering, filtering, search (`renderList` ~598, `filterCat` ~570, `filterExpenses` ~576)
+- Add/edit expense modal (`openAddModal` ~629, `openEditModal` ~639, `submitForm` ~657)
+- Smart parse modal — paste SMS/email → LLM parse (`openSmartModal` ~688, `doParse` ~695)
+- Pending review modal (`openPendingModal` ~816, `renderPendingList` ~822, `approvePending` ~856, `approveAll` ~878)
+- Chat UI (`startChat` ~487, `sendChatMessage` ~521, `restoreChat` ~464)
+- Category breakdown bars (inside `renderSummary`)
+- Month picker (`openMonthPicker` ~745, `applyMonthPicker` ~752)
+- Export CSV button (`exportCSV` ~743)
+- Wallet_ category display logic (inside `renderSummary`/`renderList` — wallet payments excluded from totals)
+- FAB (floating action button) (`toggleFab` ~334)
+- All `fmt`, `fmtDate`, `esc`, `todayISO` helpers (~395–398)
+
+### `schema.sql` — DB schema only
+Two tables: `expenses` and `pending_expenses`. Touch for adding/removing columns or indexes.
+
+### `wrangler.jsonc` — deployment config
+D1 binding, Pages project name, compatibility flags. Touch for infra/binding changes.
+
+### `automation/gmail-poller.gs` — Gmail poller (Google Apps Script)
+Polls Gmail, POSTs to `/api/ingest`. Touch for email parsing rules, polling interval, backfill.
+
+### `scripts/check-js.js` — CI safety check
+Extracts `<script>` block from built `_worker.js`, runs `new Function()` on it. Do not edit unless the extraction regex breaks.
+
+### `scripts/cdp-screenshot.js` — debug tool only
+Takes screenshot via CDP. Not part of app logic.
 
 ## Wrangler secrets (set via `wrangler secret put`)
 | Secret | Purpose |

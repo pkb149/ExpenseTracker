@@ -402,7 +402,7 @@ async function reconcileStatement(
   bank: string,
   text: string,
   payer: string
-): Promise<{ total: number; matched: number; new_pending: number; skipped: number }> {
+): Promise<{ total: number; matched: number; new_pending: number; skipped: number; skip_reason?: string }> {
   const today = new Date().toISOString().split('T')[0]
   const prompt = `Extract all expense/debit transactions from this ${bank} bank or credit card statement. Today is ${today}.
 
@@ -424,7 +424,10 @@ Each transaction:
 
 Skip: credit card bill payments, cash deposits, salary credits, interest charges, GST, bank fees, opening/closing balance, cheque returns.
 Include: all purchases, UPI debits, refunds (negative amount).
-Return {"transactions": []} if nothing qualifies.`
+
+IMPORTANT: If this document is NOT a credit card statement or bank account statement — e.g. it is a mutual fund statement, demat/holdings statement, stock portfolio statement, insurance statement, fixed deposit statement, loan account statement, or any investment account statement — return {"skip": true, "reason": "not a bank/CC statement"}.
+
+Return {"transactions": []} if it is a valid bank/CC statement but no qualifying transactions found.`
 
   const llmRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
@@ -442,8 +445,10 @@ Return {"transactions": []} if nothing qualifies.`
 
   const llmData = await llmRes.json() as { choices?: { message?: { content?: string } }[] }
   const content = llmData.choices?.[0]?.message?.content
-  let parsed: { transactions?: TxRow[] }
+  let parsed: { transactions?: TxRow[]; skip?: boolean; reason?: string }
   try { parsed = JSON.parse(content ?? '') } catch { throw new Error(`LLM parse failed: ${content?.slice(0, 200)}`) }
+
+  if (parsed.skip) return { total: 0, matched: 0, new_pending: 0, skipped: 0, skip_reason: parsed.reason ?? 'not a bank/CC statement' }
 
   const transactions = parsed.transactions ?? []
   let matched = 0, newPending = 0, skipped = 0
@@ -506,7 +511,7 @@ app.post('/api/statement-upload', async (c) => {
   const token = c.req.header('Authorization')?.replace('Bearer ', '')
   if (token !== c.env.INGEST_TOKEN) return c.json({ error: 'Unauthorized' }, 401)
 
-  const { bank, pdf_base64, paid_by, filename } = await c.req.json<{ bank: string; pdf_base64: string; paid_by?: string; filename?: string }>()
+  const { bank, pdf_base64, paid_by, filename, email_date } = await c.req.json<{ bank: string; pdf_base64: string; paid_by?: string; filename?: string; email_date?: string }>()
   if (!pdf_base64) return c.json({ error: 'pdf_base64 required' }, 400)
   if (!bank?.trim()) return c.json({ error: 'bank required' }, 400)
   if (!c.env.OPENROUTER_API_KEY) return c.json({ error: 'OPENROUTER_API_KEY not set' }, 500)
@@ -532,8 +537,8 @@ app.post('/api/statement-upload', async (c) => {
     if (isPasswordError) {
       try {
         const { meta } = await c.env.DB.prepare(
-          'INSERT INTO pending_statements (bank, filename, paid_by, pdf_data) VALUES (?,?,?,?)'
-        ).bind(bank, filename ?? null, paid_by ?? 'Prashant', pdfStorageCopy).run()
+          'INSERT INTO pending_statements (bank, filename, paid_by, pdf_data, email_date) VALUES (?,?,?,?,?)'
+        ).bind(bank, filename ?? null, paid_by ?? 'Prashant', pdfStorageCopy, email_date ?? null).run()
         return c.json({ password_required: true, id: meta.last_row_id, bank, filename })
       } catch (dbErr: any) {
         return c.json({ error: `PDF needs password - D1 store failed: ${String(dbErr?.message ?? dbErr)} (${pdfBytes.length} bytes)` }, 400)
@@ -563,7 +568,7 @@ app.delete('/api/pending-statements/:id', async (c) => {
 
 app.get('/api/pending-statements', async (c) => {
   const { results } = await c.env.DB.prepare(
-    'SELECT id, bank, filename, paid_by, created_at FROM pending_statements ORDER BY created_at DESC'
+    'SELECT id, bank, filename, paid_by, email_date, created_at FROM pending_statements ORDER BY created_at DESC'
   ).all()
   return c.json(results)
 })

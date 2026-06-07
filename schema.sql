@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS pending_statements (
   filename TEXT,
   paid_by TEXT NOT NULL DEFAULT 'Prashant',
   pdf_data BLOB NOT NULL,
+  email_date TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
