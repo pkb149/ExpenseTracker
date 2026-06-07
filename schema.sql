@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS pending_statements (
   paid_by TEXT NOT NULL DEFAULT 'Prashant',
   pdf_data BLOB NOT NULL,
   email_date TEXT,
+  unlock_status TEXT NOT NULL DEFAULT 'pending',
+  unlock_result TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

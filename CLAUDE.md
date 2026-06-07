@@ -8,56 +8,59 @@
 
 ## File ownership — which file to edit for each change
 
-### `src/index.ts` (~679 lines) — server-side only
-All Hono routes, middleware, auth, DB queries, LLM calls. Touch this for:
-- Any API route (`/api/*`, `/auth/*`, `/login`, `/privacy`)
-- Auth logic (Google OAuth flow, session cookie, allowed-email check)
-- DB reads/writes (expenses, pending_expenses tables)
-- LLM prompt changes (`/api/parse` — SMS/email parsing, `/api/analyze` — AI insights)
-- Gmail ingest logic (`/api/ingest`) — deduplication, wallet_ prefix logic, skip conditions
-- CSV export (`/api/export`)
-- Pending queue approval/skip/list (`/api/pending/*`)
-- Settlement recording (writes a `Settlement` category expense to DB)
-- Chat streaming (`/api/chat`)
-- OpenAPI spec (`/api/openapi.json`)
+### Backend — modular, one concern per file
 
-Key route→line map:
-| Route | Line |
-|-------|------|
-| `GET /api/expenses` | 169 |
-| `POST /api/expenses` | 178 |
-| `PUT /api/expenses/:id` | 186 |
-| `DELETE /api/expenses/:id` | 194 |
-| `POST /api/parse` | 199 |
-| `GET /api/export` | 256 |
-| `POST /api/ingest` | 299 |
-| `GET /api/pending` | 394 |
-| `POST /api/pending/:id/approve` | 401 |
-| `DELETE /api/pending/:id` | 423 |
-| `GET /api/categories` | 428 |
-| `POST /api/chat` | 438 |
-| `GET /api/analyze` | 492 |
+#### `src/index.ts` (~40 lines) — entry point only
+App setup, CORS middleware, auth middleware, route mounting. Touch only for:
+- Adding a new route module
+- Changing exempt paths (auth bypass list)
+- Global middleware changes
 
-### `src/html.ts` (~903 lines) — frontend only
-Entire SPA: CSS (lines 8–220), HTML markup (lines 221–330), inline `<script>` (lines ~331–900). Touch this for:
-- Any visual/UI change (layout, colors, cards, buttons)
-- Month navigation (`prevMonth`/`nextMonth` ~348, `pushMonth` ~346)
-- Summary cards with totals (`renderSummary` ~400) — Prashant/Prayashi/Common/Total spend
-- Settlement card display + click-to-settle (`openSettleModal` ~773, `recordSettlement` ~781)
-- Expense list rendering, filtering, search (`renderList` ~598, `filterCat` ~570, `filterExpenses` ~576)
-- Add/edit expense modal (`openAddModal` ~629, `openEditModal` ~639, `submitForm` ~657)
-- Smart parse modal — paste SMS/email → LLM parse (`openSmartModal` ~688, `doParse` ~695)
-- Pending review modal (`openPendingModal` ~816, `renderPendingList` ~822, `approvePending` ~856, `approveAll` ~878)
-- Chat UI (`startChat` ~487, `sendChatMessage` ~521, `restoreChat` ~464)
-- Category breakdown bars (inside `renderSummary`)
-- Month picker (`openMonthPicker` ~745, `applyMonthPicker` ~752)
-- Export CSV button (`exportCSV` ~743)
-- Wallet_ category display logic (inside `renderSummary`/`renderList` — wallet payments excluded from totals)
-- FAB (floating action button) (`toggleFab` ~334)
-- All `fmt`, `fmtDate`, `esc`, `todayISO` helpers (~395–398)
+#### `src/types.ts` — shared types
+`Bindings`, `ExpenseBody`, `TxRow`. Touch when adding a new D1 binding or shared interface.
 
-### `schema.sql` — DB schema only
-Two tables: `expenses` and `pending_expenses`. Touch for adding/removing columns or indexes.
+#### `src/lib/auth.ts` — auth crypto utilities
+`b64url`, `hmacSign`, `createSession`, `verifySession`, `getCookie`, `ALLOWED_EMAILS`. Touch for session logic or adding allowed users.
+
+#### `src/routes/auth.ts` — auth + static pages
+`GET /login`, `GET /auth/google`, `GET /auth/callback`, `GET /auth/logout`, `GET /privacy`
+
+#### `src/routes/expenses.ts` — expense CRUD + parse + export
+`GET/POST /api/expenses`, `PUT/DELETE /api/expenses/:id`, `POST /api/parse`, `GET /api/export`
+
+#### `src/routes/ingest.ts` — Gmail poller ingest
+`POST /api/ingest` — LLM parsing, dedup, wallet_ prefix logic
+
+#### `src/routes/pending.ts` — pending expense queue
+`GET /api/pending`, `POST /api/pending/:id/approve`, `DELETE /api/pending/:id`
+
+#### `src/routes/statements.ts` — PDF statement reconciliation
+`reconcileStatement()` helper, `POST /api/statement-upload`, `POST /api/statement-ingest`, `GET /api/pending-statements`, `POST /api/pending-statements/:id/unlock`, `DELETE /api/pending-statements/:id`
+
+#### `src/routes/chat.ts` — AI features + metadata
+`GET /api/categories`, `POST /api/chat`, `GET /api/analyze`, `GET /api/openapi.json`
+
+### Frontend
+
+#### `src/html.ts` (~1000 lines) — entire SPA
+CSS (lines 8–220), HTML markup (lines 221–343), inline `<script>` (lines ~344–976). Touch for:
+- Any visual/UI change
+- Month navigation (`prevMonth`/`nextMonth` ~368, `pushMonth` ~366)
+- Summary cards (`renderSummary` ~420) — Prashant/Prayashi/Common/Total
+- Settlement card + modal (`openSettleModal` ~793, `recordSettlement` ~801)
+- Expense list + filtering (`renderList` ~618, `filterExpenses` ~596)
+- Add/edit modal (`openAddModal` ~649, `openEditModal` ~659, `submitForm` ~677)
+- Smart parse modal (`openSmartModal` ~708, `doParse` ~715)
+- Pending review modal (`openPendingModal` ~836, `renderPendingList` ~842, `approvePending` ~876, `approveAll` ~898)
+- Statements modal (`openStmtModal` ~919, `renderStmtList` ~925, `unlockStmt` ~947, `rejectStmt` ~986)
+- Chat UI (`startChat` ~507, `sendChatMessage` ~541, `restoreChat` ~484)
+- Month picker (`openMonthPicker` ~765, `applyMonthPicker` ~772)
+- FAB (`toggleFab` ~354)
+
+### Other files
+
+#### `schema.sql` — DB schema only
+Tables: `expenses`, `pending_expenses`, `pending_statements`, `statement_imports`. Touch for column/index changes.
 
 ### `wrangler.jsonc` — deployment config
 D1 binding, Pages project name, compatibility flags. Touch for infra/binding changes.
@@ -139,5 +142,7 @@ node scripts/cdp-screenshot.js [url] [output.png]
 - `mcp__chrome-devtools__*` MCP tools do NOT connect to this CDP instance
 
 ## Automation
-- `automation/gmail-poller.gs` — Google Apps Script that polls Gmail and POSTs to `/api/ingest`
-- Runs hourly; backfill() processes last 37 days in batches of 40
+- `automation/gmail-poller.gs` — Google Apps Script
+  - `pollEmails()` — polls Gmail receipts, POSTs to `/api/ingest` (hourly)
+  - `pollStatements()` — polls Gmail for PDF attachments, POSTs to `/api/statement-upload` (daily 8am)
+  - `backfill()` / `backfillStatements()` — manual one-shot backfill for last 37/90 days

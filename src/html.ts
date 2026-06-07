@@ -913,6 +913,9 @@ async function loadStmtCount(){
     }else{
       btn.style.display='none';
     }
+    pendingStmts.filter(function(s){return s.unlock_status==='processing';}).forEach(function(s){
+      pollUnlockStatus(s.id,0);
+    });
   }catch(e){}
 }
 
@@ -931,36 +934,79 @@ function renderStmtList(){
   el.innerHTML=pendingStmts.map(function(s){
     var dt=s.email_date||s.created_at.slice(0,10);
     var label=s.bank!=='Unknown'?s.bank+' Statement':(s.filename||'unknown.pdf');
+    var isProcessing=s.unlock_status==='processing';
+    var isFailed=s.unlock_status==='failed';
+    var errMsg=isFailed&&s.unlock_result?JSON.parse(s.unlock_result).error:'';
     return '<div class="stmt-card" id="sc-'+s.id+'">'+
       '<div class="exp-desc">'+esc(label)+'</div>'+
       '<div class="stmt-meta">received '+dt+' &middot; '+esc(s.paid_by)+'</div>'+
       '<div class="stmt-pw">'+
-        '<input type="password" id="spw-'+s.id+'" placeholder="Enter PDF password" autocomplete="off">'+
-        '<button class="btn btn-primary" style="font-size:.8125rem;padding:.45rem .75rem;white-space:nowrap" onclick="unlockStmt('+s.id+')">Unlock</button>'+
-        '<button class="btn btn-secondary" style="font-size:.8125rem;padding:.45rem .75rem;white-space:nowrap" onclick="rejectStmt('+s.id+')">Reject</button>'+
+        '<input type="password" id="spw-'+s.id+'" placeholder="Enter PDF password" autocomplete="off"'+(isProcessing?' disabled':'')+'>'+
+        '<button id="subtn-'+s.id+'" class="btn btn-primary" style="font-size:.8125rem;padding:.45rem .75rem;white-space:nowrap" onclick="unlockStmt('+s.id+')"'+(isProcessing?' disabled':'')+'>'+
+          (isProcessing?'<span class="spinner"></span>Processing...':'Unlock')+
+        '</button>'+
+        '<button id="rjbtn-'+s.id+'" class="btn btn-secondary" style="font-size:.8125rem;padding:.45rem .75rem;white-space:nowrap" onclick="rejectStmt('+s.id+')"'+(isProcessing?' disabled':'')+'>Reject</button>'+
       '</div>'+
-      '<div id="smsg-'+s.id+'" style="font-size:.75rem;margin-top:.35rem;color:var(--muted)"></div>'+
+      '<div id="smsg-'+s.id+'" style="font-size:.75rem;margin-top:.35rem;color:'+(isFailed?'#ef4444':'var(--muted)')+'">'+
+        (isFailed?esc(errMsg):'')+(isProcessing?'Processing in background — you can close this page':'')+'</div>'+
     '</div>';
   }).join('');
+}
+
+function stmtUnlockReset(id,errText){
+  const unlockBtn=document.getElementById('subtn-'+id);
+  const rejectBtn=document.getElementById('rjbtn-'+id);
+  const pwInput=document.getElementById('spw-'+id);
+  if(unlockBtn){unlockBtn.disabled=false;unlockBtn.textContent='Unlock';}
+  if(rejectBtn)rejectBtn.disabled=false;
+  if(pwInput)pwInput.disabled=false;
+  if(errText){const msg=document.getElementById('smsg-'+id);if(msg){msg.textContent=errText;msg.style.color='#ef4444';}}
+}
+
+function stmtUnlockDone(id){
+  const card=document.getElementById('sc-'+id);
+  if(card){card.style.transition='opacity .4s';card.style.opacity='0';}
+  setTimeout(function(){
+    pendingStmts=pendingStmts.filter(function(s){return s.id!==id;});
+    renderStmtList();loadStmtCount();loadPendingCount();
+  },400);
+}
+
+function pollUnlockStatus(id,attempts){
+  if(attempts>60){stmtUnlockReset(id,'Timed out — check pending queue or retry');return;}
+  setTimeout(async function(){
+    try{
+      const res=await fetch('/api/pending-statements/'+id+'/status');
+      const r=await res.json();
+      if(r.status==='done'){stmtUnlockDone(id);return;}
+      if(r.status==='failed'){stmtUnlockReset(id,r.result&&r.result.error?r.result.error:'Processing failed');return;}
+      pollUnlockStatus(id,attempts+1);
+    }catch(e){pollUnlockStatus(id,attempts+1);}
+  },2000);
 }
 
 async function unlockStmt(id){
   const pw=document.getElementById('spw-'+id).value.trim();
   const msg=document.getElementById('smsg-'+id);
   if(!pw){msg.textContent='Enter password first';msg.style.color='#ef4444';return;}
-  msg.textContent='Processing...';msg.style.color='var(--muted)';
+  const unlockBtn=document.getElementById('subtn-'+id);
+  const rejectBtn=document.getElementById('rjbtn-'+id);
+  const pwInput=document.getElementById('spw-'+id);
+  unlockBtn.disabled=true;rejectBtn.disabled=true;pwInput.disabled=true;
+  unlockBtn.innerHTML='<span class="spinner"></span>Queuing...';
+  msg.textContent='';
   try{
     const res=await fetch('/api/pending-statements/'+id+'/unlock',{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({password:pw})
     });
     const r=await res.json();
-    if(!res.ok){msg.textContent=r.error||'Failed';msg.style.color='#ef4444';return;}
-    msg.textContent='Done — '+r.new_pending+' new, '+r.matched+' already matched';
-    msg.style.color='#16a34a';
-    pendingStmts=pendingStmts.filter(function(s){return s.id!==id;});
-    setTimeout(function(){renderStmtList();loadStmtCount();loadPendingCount();},1500);
-  }catch(e){msg.textContent='Network error';msg.style.color='#ef4444';}
+    if(!res.ok){stmtUnlockReset(id,r.error||'Failed');return;}
+    unlockBtn.innerHTML='<span class="spinner"></span>Processing...';
+    msg.textContent='You can close this page — processing continues in background';
+    msg.style.color='var(--muted)';
+    pollUnlockStatus(id,0);
+  }catch(e){stmtUnlockReset(id,'Network error');}
 }
 
 async function rejectStmt(id){

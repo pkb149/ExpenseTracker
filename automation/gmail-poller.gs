@@ -174,7 +174,7 @@ function pollStatements() {
   const label = GmailApp.getUserLabelByName(STATEMENT_LABEL) || GmailApp.createLabel(STATEMENT_LABEL);
 
   // Search for statement PDFs not yet processed — look back 37 days to catch monthly statements
-  const query = 'has:attachment filename:pdf -label:' + STATEMENT_LABEL + ' newer_than:37d ' +
+  const query = 'has:attachment filename:pdf -label:' + STATEMENT_LABEL + ' newer_than:2d ' +
     '(subject:statement OR subject:e-statement OR subject:estatement OR subject:"monthly statement" OR subject:"account statement" OR subject:"card statement")';
 
   const threads = GmailApp.search(query, 0, 20);
@@ -187,27 +187,25 @@ function pollStatements() {
     thread.getMessages().forEach(function(msg) {
       const subject = msg.getSubject();
       const from = msg.getFrom();
-      const emailDate = Utilities.formatDate(msg.getDate(), 'Asia/Kolkata', 'yyyy-MM-dd');
+      const bank = detectStatementBank(subject, from);
 
       const attachments = msg.getAttachments({ includeInlineImages: false, includeAttachments: true });
       attachments.forEach(function(att) {
         if (att.getContentType() !== 'application/pdf' && !att.getName().toLowerCase().endsWith('.pdf')) return;
 
-        const fname = att.getName();
-        const bank = detectStatementBank(subject, from, fname);
         const pdfBytes = att.getBytes();
         const pdf_base64 = Utilities.base64Encode(pdfBytes);
         const paid_by = STATEMENT_PAID_BY[bank] || PAID_BY_DEFAULT;
         threadPdfs++;
 
-        Logger.log('Uploading: ' + fname + ' (' + Math.round(pdfBytes.length / 1024) + ' KB) bank=' + bank + ' paid_by=' + paid_by);
+        Logger.log('Uploading: ' + att.getName() + ' (' + Math.round(pdfBytes.length / 1024) + ' KB) bank=' + bank + ' paid_by=' + paid_by);
 
         try {
           const resp = UrlFetchApp.fetch(WORKER_URL + '/api/statement-upload', {
             method: 'post',
             contentType: 'application/json',
             headers: { Authorization: 'Bearer ' + INGEST_TOKEN },
-            payload: JSON.stringify({ bank: bank, pdf_base64: pdf_base64, paid_by: paid_by, filename: fname, email_date: emailDate }),
+            payload: JSON.stringify({ bank: bank, pdf_base64: pdf_base64, paid_by: paid_by, filename: att.getName() }),
             muteHttpExceptions: true,
           });
 
@@ -245,9 +243,8 @@ function pollStatements() {
   Logger.log('pollStatements done. Uploaded: ' + uploaded + ', Errored: ' + errored);
 }
 
-function detectStatementBank(subject, sender, filename) {
+function detectStatementBank(subject, sender) {
   var combined = (subject + ' ' + sender).toLowerCase();
-  // Sender/subject keyword match
   if (combined.indexOf('hdfc') !== -1) return 'HDFC';
   if (combined.indexOf('icici') !== -1) return 'ICICI';
   if (combined.indexOf('axis') !== -1) return 'Axis';
@@ -256,27 +253,6 @@ function detectStatementBank(subject, sender, filename) {
   if (combined.indexOf('idfc') !== -1) return 'IDFC';
   if (combined.indexOf('indusind') !== -1) return 'IndusInd';
   if (combined.indexOf('yes bank') !== -1 || combined.indexOf('yesbank') !== -1) return 'Yes Bank';
-  if (combined.indexOf('scapia') !== -1) return 'Scapia';
-  if (combined.indexOf('slice') !== -1) return 'Slice';
-  if (combined.indexOf('onecard') !== -1 || combined.indexOf('one card') !== -1) return 'OneCard';
-  if (combined.indexOf('paytm') !== -1) return 'Paytm';
-  if (combined.indexOf('au bank') !== -1 || combined.indexOf('aubank') !== -1) return 'AU Bank';
-  if (combined.indexOf('bob') !== -1 || combined.indexOf('bank of baroda') !== -1) return 'Bank of Baroda';
-  // Filename-based fallback
-  if (filename) {
-    var fn = filename.toLowerCase();
-    if (fn.indexOf('scapia') !== -1) return 'Scapia';
-    if (fn.indexOf('slice') !== -1) return 'Slice';
-    if (fn.indexOf('tchs') !== -1) return 'ICICI';  // ICICI transaction history format
-    if (fn.indexOf('hdfc') !== -1) return 'HDFC';
-    if (fn.indexOf('icici') !== -1) return 'ICICI';
-    if (fn.indexOf('axis') !== -1) return 'Axis';
-    if (fn.indexOf('sbi') !== -1) return 'SBI';
-    if (fn.indexOf('idfc') !== -1) return 'IDFC';
-    if (fn.indexOf('kotak') !== -1) return 'Kotak';
-    if (fn.indexOf('onecard') !== -1) return 'OneCard';
-    if (fn.indexOf('aubank') !== -1 || fn.indexOf('au_bank') !== -1) return 'AU Bank';
-  }
   return 'Unknown';
 }
 
@@ -295,23 +271,19 @@ function backfillStatements() {
   threads.forEach(function(thread) {
     var threadPdfs = 0, threadUploaded = 0, threadErrored = 0;
     thread.getMessages().forEach(function(msg) {
-      const fname_sub = msg.getSubject();
-      const fname_from = msg.getFrom();
-      const emailDate = Utilities.formatDate(msg.getDate(), 'Asia/Kolkata', 'yyyy-MM-dd');
+      const bank = detectStatementBank(msg.getSubject(), msg.getFrom());
       const attachments = msg.getAttachments({ includeInlineImages: false });
       attachments.forEach(function(att) {
         if (!att.getName().toLowerCase().endsWith('.pdf')) return;
-        const fname = att.getName();
-        const bank = detectStatementBank(fname_sub, fname_from, fname);
         const pdfBytes = att.getBytes();
         const paid_by = STATEMENT_PAID_BY[bank] || PAID_BY_DEFAULT;
         threadPdfs++;
-        Logger.log('Uploading: ' + fname + ' (' + Math.round(pdfBytes.length / 1024) + ' KB) bank=' + bank);
+        Logger.log('Uploading: ' + att.getName() + ' (' + Math.round(pdfBytes.length / 1024) + ' KB) bank=' + bank);
         try {
           const resp = UrlFetchApp.fetch(WORKER_URL + '/api/statement-upload', {
             method: 'post', contentType: 'application/json',
             headers: { Authorization: 'Bearer ' + INGEST_TOKEN },
-            payload: JSON.stringify({ bank: bank, pdf_base64: Utilities.base64Encode(pdfBytes), paid_by: paid_by, filename: fname, email_date: emailDate }),
+            payload: JSON.stringify({ bank: bank, pdf_base64: Utilities.base64Encode(pdfBytes), paid_by: paid_by, filename: att.getName() }),
             muteHttpExceptions: true,
           });
           var code = resp.getResponseCode();
