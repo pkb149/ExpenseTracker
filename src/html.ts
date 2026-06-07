@@ -936,6 +936,7 @@ function renderStmtList(){
       '<div class="stmt-pw">'+
         '<input type="password" id="spw-'+s.id+'" placeholder="Enter PDF password" autocomplete="off">'+
         '<button class="btn btn-primary" style="font-size:.8125rem;padding:.45rem .75rem;white-space:nowrap" onclick="unlockStmt('+s.id+')">Unlock</button>'+
+        '<button class="btn btn-secondary" style="font-size:.8125rem;padding:.45rem .75rem;white-space:nowrap" onclick="rejectStmt('+s.id+')">Reject</button>'+
       '</div>'+
       '<div id="smsg-'+s.id+'" style="font-size:.75rem;margin-top:.35rem;color:var(--muted)"></div>'+
     '</div>';
@@ -959,6 +960,13 @@ async function unlockStmt(id){
     pendingStmts=pendingStmts.filter(function(s){return s.id!==id;});
     setTimeout(function(){renderStmtList();loadStmtCount();loadPendingCount();},1500);
   }catch(e){msg.textContent='Network error';msg.style.color='#ef4444';}
+}
+
+async function rejectStmt(id){
+  await fetch('/api/pending-statements/'+id,{method:'DELETE'});
+  pendingStmts=pendingStmts.filter(function(s){return s.id!==id;});
+  renderStmtList();
+  loadStmtCount();
 }
 
 loadStmtCount();

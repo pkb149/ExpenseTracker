@@ -556,6 +556,11 @@ app.post('/api/statement-upload', async (c) => {
   }
 })
 
+app.delete('/api/pending-statements/:id', async (c) => {
+  await c.env.DB.prepare('DELETE FROM pending_statements WHERE id=?').bind(c.req.param('id')).run()
+  return c.json({ ok: true })
+})
+
 app.get('/api/pending-statements', async (c) => {
   const { results } = await c.env.DB.prepare(
     'SELECT id, bank, filename, paid_by, created_at FROM pending_statements ORDER BY created_at DESC'
