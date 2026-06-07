@@ -8,6 +8,7 @@ export type Bindings = {
   INGEST_TOKEN: string
   API_KEY: string
   PDF_PASSWORDS: string
+  LOG_LEVEL: string  // 'debug' | 'error' | unset (defaults to 'error')
 }
 
 export interface ExpenseBody {

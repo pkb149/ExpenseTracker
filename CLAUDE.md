@@ -35,7 +35,7 @@ App setup, CORS middleware, auth middleware, route mounting. Touch only for:
 `GET /api/pending`, `POST /api/pending/:id/approve`, `DELETE /api/pending/:id`
 
 #### `src/routes/statements.ts` — PDF statement reconciliation
-`reconcileStatement()` helper, `POST /api/statement-upload`, `POST /api/statement-ingest`, `GET /api/pending-statements`, `POST /api/pending-statements/:id/unlock`, `DELETE /api/pending-statements/:id`
+`reconcileStatement()` helper, `POST /api/statement-upload`, `POST /api/statement-ingest`, `GET /api/pending-statements`, `POST /api/pending-statements/:id/unlock`, `POST /api/pending-statements/:id/retry`, `POST /api/pending-statements/:id/process-async`, `GET /api/pending-statements/:id/status`, `DELETE /api/pending-statements/:id`
 
 #### `src/routes/chat.ts` — AI features + metadata
 `GET /api/categories`, `POST /api/chat`, `GET /api/analyze`, `GET /api/openapi.json`
@@ -107,6 +107,33 @@ make deploy   # build + check + wrangler pages deploy
 npm run dev   # local dev
 ```
 
+## Log level (LOG_LEVEL env var)
+Controlled via `LOG_LEVEL` Cloudflare secret. Two levels:
+- `error` (default / unset) — only errors logged (FAIL lines, skipped pages, subrequest failures)
+- `debug` — full trace: extract bytes, page count, per-page progress, subrequest responses
+
+```bash
+# Enable debug logging
+npx wrangler secret put LOG_LEVEL --env production
+# enter: debug
+
+# Revert to error-only
+npx wrangler secret delete LOG_LEVEL --env production
+# or set it back to: error
+```
+
+## Watching Worker logs (wrangler tail)
+```bash
+# 1. Get latest deployment ID
+npx wrangler pages deployment list --project-name expense-tracker | head -10
+
+# 2. Tail logs (replace DEPLOYMENT_ID with the full UUID from step 1)
+npx wrangler pages deployment tail <DEPLOYMENT_ID> --project-name expense-tracker --format pretty
+```
+- `make deploy` output shows the deployment URL prefix (e.g. `51379844.expense-tracker-4er.pages.dev`) — the UUID is `51379844-xxxx-xxxx-xxxx-xxxxxxxxxxxx`, get full UUID from step 1
+- `console.log` output appears inline with request logs
+- Subrequests fired via `waitUntil(fetch(...))` may not appear as separate request lines — check for `console.log` entries instead
+
 ## HTML Template Literal Safety (CRITICAL)
 `src/html.ts` returns the entire HTML as a TypeScript template literal. esbuild evaluates escape sequences inside template literals:
 - `'\n'` → actual newline → unterminated JS string → syntax error in browser
@@ -140,6 +167,71 @@ node scripts/cdp-screenshot.js [url] [output.png]
 - Chrome rejects `--remote-debugging-port` with the default profile dir — must use a temp dir
 - Copy `Cookies` from the real Chrome profile so the session carries over
 - `mcp__chrome-devtools__*` MCP tools do NOT connect to this CDP instance
+
+## PDF Statement Processing — Architecture & Lessons
+
+### Async processing pipeline
+Password-locked PDFs go through two-stage async processing via self-subrequests:
+1. **Extract stage**: PDF → text pages (stored in `unlock_result.pages[]`)
+2. **Reconcile stage**: 1 page per CF invocation → LLM → insert to `pending_expenses`
+
+Each stage fires the next via `c.executionCtx.waitUntil(fetch('/process-async', ...))`. State tracked entirely in `unlock_result` JSON on `pending_statements` row.
+
+### Cloudflare Pages Function limits
+- **CF kills subrequest invocations at ~45s wall-clock** — this is a hard limit for Pages Functions, not documented but observed.
+- **`setTimeout` does NOT fire during I/O waits** — CF suspends JS while a fetch is pending. Use `AbortSignal.timeout(ms)` instead (supported since compat date `2023-03-01`).
+- **Subrequest logs are invisible in `wrangler tail`** — only the original HTTP request appears. Use D1 state polling to observe progress.
+
+### Auto-reset pattern
+Status endpoint (`GET /api/pending-statements/:id/status`) acts as the watchdog:
+- If `unlock_status='processing'` and `started_at` is > 50s ago → reset to `'failed'`
+- Preserves `pages`, `pages_done`, `page`, `page_model_idx` so retry can resume
+- `started_at` is reset at the start of EACH page invocation (not once per job)
+
+UI polls status every 2s. On `'failed'` with `has_pages=true` → auto-retries (infinite, no user action needed).
+
+### Model cycling across retries
+Each page tracks `page_model_idx` in state. One model per invocation:
+1. Try model at index 0 with `AbortSignal.timeout(40000)`
+2. On failure: increment `page_model_idx`, return (no chain). Auto-reset fires → auto-retry fires → same page, next model.
+3. All models exhausted (`page_model_idx >= 3`): skip page, chain to next.
+
+**Model order** (most reliable first, based on testing):
+```typescript
+const MODEL_LIST = [
+  'openrouter/free',          // auto-selects free model — best performer
+  'google/gemma-4-31b-it:free', // fallback
+  LLM_MODEL ?? 'openai/gpt-oss-120b:free', // last resort — consistently slow/errors
+]
+```
+`openai/gpt-oss-120b:free` (default `LLM_MODEL`) consistently returns errors or hangs. `openrouter/free` tends to eventually succeed.
+
+### Resume without password
+After extract stage, pages are stored in DB. If processing fails:
+- `POST /api/pending-statements/:id/retry` — no password, resumes from first undone page with correct `page_model_idx`
+- UI shows "Retry (page N/M)" button when `has_pages=true` in failed state
+- Auto-retry handles this automatically — manual button only shown after polling times out (>120 polls)
+
+### Debugging LLM calls via D1
+```bash
+npx wrangler d1 execute expense-tracker-db --remote --command \
+  "SELECT json_extract(unlock_result,'$.progress') as p, \
+          json_extract(unlock_result,'$.page_model_idx') as mi, \
+          json_extract(unlock_result,'$.llm_status') as ls, \
+          unlock_status as s \
+   FROM pending_statements WHERE id=<ID>"
+```
+`llm_status` shows current model attempt and result (cleared on page success). `last_llm_status` preserved in failed state from auto-reset.
+
+### Wrangler secrets for Pages (not Workers)
+```bash
+# Pages secrets use different command:
+npx wrangler pages secret put <KEY> --project-name expense-tracker
+# NOT: npx wrangler secret put (that's for Workers)
+```
+
+### Soft-delete processed statements
+Processed rows set `unlock_status='processed'`, `processed_at`, `unlock_result=NULL`. Hidden from list. Hard-deleted after 1 year TTL on next list fetch.
 
 ## Automation
 - `automation/gmail-poller.gs` — Google Apps Script

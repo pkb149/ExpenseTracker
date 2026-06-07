@@ -936,14 +936,20 @@ function renderStmtList(){
     var label=s.bank!=='Unknown'?s.bank+' Statement':(s.filename||'unknown.pdf');
     var isProcessing=s.unlock_status==='processing';
     var isFailed=s.unlock_status==='failed';
-    var errMsg=isFailed&&s.unlock_result?JSON.parse(s.unlock_result).error:'';
+    var stateObj=s.unlock_result?(function(r){try{return JSON.parse(r);}catch(e){return {};}})(s.unlock_result):{};
+    var errMsg=isFailed?stateObj.error:'';
+    var hasPages=isFailed&&stateObj.pages&&stateObj.pages.length>0;
+    var nextPage=hasPages?(function(st){var done=st.pages_done||[];for(var i=0;i<st.pages.length;i++){if(done.indexOf(i)===-1)return i;}return 0;})(stateObj):0;
+    var totalPages=hasPages?stateObj.pages.length:0;
+    var progText=isProcessing&&stateObj.progress?(' ('+stateObj.progress+')'):'';
     return '<div class="stmt-card" id="sc-'+s.id+'">'+
       '<div class="exp-desc">'+esc(label)+'</div>'+
       '<div class="stmt-meta">received '+dt+' &middot; '+esc(s.paid_by)+'</div>'+
       '<div class="stmt-pw">'+
-        '<input type="password" id="spw-'+s.id+'" placeholder="Enter PDF password" autocomplete="off"'+(isProcessing?' disabled':'')+'>'+
-        '<button id="subtn-'+s.id+'" class="btn btn-primary" style="font-size:.8125rem;padding:.45rem .75rem;white-space:nowrap" onclick="unlockStmt('+s.id+')"'+(isProcessing?' disabled':'')+'>'+
-          (isProcessing?'<span class="spinner"></span>Processing...':'Unlock')+
+        (hasPages?'':('<input type="password" id="spw-'+s.id+'" placeholder="Enter PDF password" autocomplete="off"'+(isProcessing?' disabled':'')+'>'))+
+        '<button id="subtn-'+s.id+'" class="btn btn-primary" style="font-size:.8125rem;padding:.45rem .75rem;white-space:nowrap"'+(isProcessing?' disabled':'')+
+          (hasPages?' onclick="retryStmt('+s.id+')"':' onclick="unlockStmt('+s.id+')"')+'>'+
+          (isProcessing?('<span class="spinner"></span>Processing...'+esc(progText)):(hasPages?('Retry (page '+(nextPage+1)+'/'+totalPages+')'):'Unlock'))+
         '</button>'+
         '<button id="rjbtn-'+s.id+'" class="btn btn-secondary" style="font-size:.8125rem;padding:.45rem .75rem;white-space:nowrap" onclick="rejectStmt('+s.id+')"'+(isProcessing?' disabled':'')+'>Reject</button>'+
       '</div>'+
@@ -953,14 +959,19 @@ function renderStmtList(){
   }).join('');
 }
 
-function stmtUnlockReset(id,errText){
-  const unlockBtn=document.getElementById('subtn-'+id);
-  const rejectBtn=document.getElementById('rjbtn-'+id);
-  const pwInput=document.getElementById('spw-'+id);
-  if(unlockBtn){unlockBtn.disabled=false;unlockBtn.textContent='Unlock';}
+function stmtUnlockReset(id,errText,hasPages){
+  var unlockBtn=document.getElementById('subtn-'+id);
+  var rejectBtn=document.getElementById('rjbtn-'+id);
+  var pwInput=document.getElementById('spw-'+id);
+  if(hasPages){
+    if(unlockBtn){unlockBtn.disabled=false;unlockBtn.innerHTML='Retry';unlockBtn.onclick=function(){retryStmt(id);};}
+    if(pwInput)pwInput.style.display='none';
+  }else{
+    if(unlockBtn){unlockBtn.disabled=false;unlockBtn.innerHTML='Unlock';unlockBtn.onclick=function(){unlockStmt(id);};}
+    if(pwInput){pwInput.disabled=false;pwInput.style.display='';}
+  }
   if(rejectBtn)rejectBtn.disabled=false;
-  if(pwInput)pwInput.disabled=false;
-  if(errText){const msg=document.getElementById('smsg-'+id);if(msg){msg.textContent=errText;msg.style.color='#ef4444';}}
+  if(errText){var msg=document.getElementById('smsg-'+id);if(msg){msg.textContent=errText;msg.style.color='#ef4444';}}
 }
 
 function stmtUnlockDone(id){
@@ -973,13 +984,27 @@ function stmtUnlockDone(id){
 }
 
 function pollUnlockStatus(id,attempts){
-  if(attempts>60){stmtUnlockReset(id,'Timed out — check pending queue or retry');return;}
+  if(attempts>120){stmtUnlockReset(id,'Timed out — check pending queue or retry');return;}
   setTimeout(async function(){
     try{
       const res=await fetch('/api/pending-statements/'+id+'/status');
       const r=await res.json();
       if(r.status==='done'){stmtUnlockDone(id);return;}
-      if(r.status==='failed'){stmtUnlockReset(id,r.result&&r.result.error?r.result.error:'Processing failed');return;}
+      if(r.status==='failed'){
+        var hasPages=r.result&&r.result.has_pages;
+        if(hasPages){
+          var btn=document.getElementById('subtn-'+id);
+          if(btn)btn.innerHTML='<span class="spinner"></span>Auto-retrying...';
+          retryStmt(id);
+          return;
+        }
+        stmtUnlockReset(id,r.result&&r.result.error?r.result.error:'Processing failed',false);return;
+      }
+      var progress=r.result&&r.result.progress?r.result.progress:null;
+      var llmE=r.result&&r.result.llm_elapsed_s!=null?', LLM '+r.result.llm_elapsed_s+'s':'';
+      var pageE=r.result&&r.result.page_elapsed_s!=null?' ('+r.result.page_elapsed_s+'s'+llmE+')':'';
+      var btn=document.getElementById('subtn-'+id);
+      if(btn&&progress)btn.innerHTML='<span class="spinner"></span>'+esc(progress)+esc(pageE)+'...';
       pollUnlockStatus(id,attempts+1);
     }catch(e){pollUnlockStatus(id,attempts+1);}
   },2000);
@@ -1007,6 +1032,23 @@ async function unlockStmt(id){
     msg.style.color='var(--muted)';
     pollUnlockStatus(id,0);
   }catch(e){stmtUnlockReset(id,'Network error');}
+}
+
+async function retryStmt(id){
+  var unlockBtn=document.getElementById('subtn-'+id);
+  var rejectBtn=document.getElementById('rjbtn-'+id);
+  var msg=document.getElementById('smsg-'+id);
+  if(unlockBtn){unlockBtn.disabled=true;unlockBtn.innerHTML='<span class="spinner"></span>Retrying...';}
+  if(rejectBtn)rejectBtn.disabled=true;
+  if(msg){msg.textContent='';msg.style.color='var(--muted)';}
+  try{
+    const res=await fetch('/api/pending-statements/'+id+'/retry',{method:'POST',headers:{'Content-Type':'application/json'}});
+    const r=await res.json();
+    if(!res.ok){stmtUnlockReset(id,r.error||'Retry failed',true);return;}
+    if(unlockBtn)unlockBtn.innerHTML='<span class="spinner"></span>Processing...';
+    if(msg)msg.textContent='You can close this page — processing continues in background';
+    pollUnlockStatus(id,0);
+  }catch(e){stmtUnlockReset(id,'Network error',true);}
 }
 
 async function rejectStmt(id){
