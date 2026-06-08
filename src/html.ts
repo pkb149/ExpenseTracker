@@ -135,8 +135,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 <header class="header">
   <h1 onclick="currentMonth=(()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');})();pushMonth();load();" style="cursor:pointer">Expense Tracker</h1>
   <div style="display:flex;gap:.5rem;align-items:center">
-    <button class="pending-btn" onclick="openStmtModal()" id="stmt-btn" style="display:none;border-color:rgba(245,158,11,.6);background:rgba(245,158,11,.2)">
-      &#x1F512; <span id="stmt-count">0</span>
+    <button class="pending-btn" onclick="openStmtModal()" id="stmt-btn" style="border-color:rgba(245,158,11,.6);background:rgba(245,158,11,.2)">
+      &#x1F512; <span id="stmt-count" style="display:none">0</span>
+    </button>
+    <button class="pending-btn" onclick="openEmailModal()" id="email-btn" style="border-color:rgba(99,102,241,.6);background:rgba(99,102,241,.2)">
+      &#x1F4E7; <span id="email-count">0</span>
     </button>
     <button class="pending-btn" onclick="openPendingModal()" id="pending-btn">
       Review <span class="badge-count" id="pending-count">0</span>
@@ -324,6 +327,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
       <div class="modal-title">Review Queue</div>
       <div style="display:flex;gap:.5rem;align-items:center">
         <button class="btn btn-success" style="font-size:.8125rem;padding:.35rem .75rem" onclick="approveAll()">Approve All</button>
+        <button class="btn btn-secondary" style="font-size:.8125rem;padding:.35rem .75rem" onclick="rejectAll()">Reject All</button>
         <button class="modal-close" onclick="closePendingModal()">&times;</button>
       </div>
     </div>
@@ -334,10 +338,28 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 <div class="overlay" id="stmt-overlay">
   <div class="modal" style="max-height:92vh">
     <div class="modal-hdr">
-      <div class="modal-title">&#x1F512; Statements Needing Password</div>
+      <div class="modal-title">&#x1F512; Statements</div>
       <button class="modal-close" onclick="closeStmtModal()">&times;</button>
     </div>
+    <div style="padding:.75rem 1rem;border-bottom:1px solid var(--border);display:flex;flex-wrap:wrap;gap:.5rem;align-items:flex-end">
+      <div style="flex:1;min-width:120px"><label style="font-size:.75rem;color:var(--muted);display:block;margin-bottom:.25rem">PDF File</label><input type="file" id="stmt-file" accept=".pdf" style="font-size:.8125rem;width:100%"></div>
+      <div><label style="font-size:.75rem;color:var(--muted);display:block;margin-bottom:.25rem">Bank</label><input type="text" id="stmt-bank" placeholder="e.g. HDFC" style="width:100px;font-size:.8125rem"></div>
+      <div><label style="font-size:.75rem;color:var(--muted);display:block;margin-bottom:.25rem">Paid By</label><select id="stmt-paidby" style="font-size:.8125rem"><option>Prashant</option><option>Prayashi</option></select></div>
+      <button class="btn btn-primary" style="font-size:.8125rem;padding:.45rem .75rem" onclick="uploadStmt()">Upload</button>
+      <div id="stmt-upload-msg" style="font-size:.75rem;color:var(--muted);width:100%"></div>
+    </div>
     <div id="stmt-list"><div class="empty"><div class="empty-icon">&#x2705;</div><div>No statements pending</div></div></div>
+  </div>
+</div>
+
+<div class="overlay" id="email-overlay">
+  <div class="modal" style="max-height:92vh">
+    <div class="modal-hdr">
+      <div class="modal-title">&#x1F4E7; Pending Emails</div>
+      <button class="modal-close" onclick="closeEmailModal()">&times;</button>
+    </div>
+    <div style="padding:.625rem 1rem;border-bottom:1px solid var(--border);font-size:.8125rem;color:var(--muted)">Use ChatGPT with the OpenAPI spec to process these emails into expenses, then mark each done.</div>
+    <div id="email-list"><div class="empty"><div class="empty-icon">&#x2705;</div><div>No pending emails</div></div></div>
   </div>
 </div>
 
@@ -350,6 +372,7 @@ let expenses=[];
 let editingId=null;
 let fabOpen=false;
 let pendingStmts=[];
+let pendingEmails=[];
 
 function toggleFab(){
   fabOpen=!fabOpen;
@@ -899,20 +922,54 @@ async function approveAll(){
   for(const p of [...pendingItems]){await approvePending(p.id);}
 }
 
+async function rejectAll(){
+  for(const p of [...pendingItems]){await fetch('/api/pending/'+p.id,{method:'DELETE'});}
+  pendingItems=[];
+  renderPendingList();
+  loadPendingCount();
+}
+
 loadPendingCount();
 setInterval(loadPendingCount,5*60*1000);
+
+async function uploadStmt(){
+  const fileInput=document.getElementById('stmt-file');
+  const bank=(document.getElementById('stmt-bank').value.trim()||'Unknown');
+  const paidBy=document.getElementById('stmt-paidby').value;
+  const msg=document.getElementById('stmt-upload-msg');
+  if(!fileInput.files||!fileInput.files[0]){msg.textContent='Select a PDF first';msg.style.color='#ef4444';return;}
+  const file=fileInput.files[0];
+  msg.textContent='Uploading...';msg.style.color='var(--muted)';
+  try{
+    const b64=await new Promise(function(resolve,reject){
+      const r=new FileReader();
+      r.onload=function(){resolve(r.result.split(',')[1]);};
+      r.onerror=reject;
+      r.readAsDataURL(file);
+    });
+    const res=await fetch('/api/statement-upload-manual',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({bank:bank,pdf_base64:b64,paid_by:paidBy,filename:file.name})
+    });
+    const r=await res.json();
+    if(!res.ok){msg.textContent=r.error||'Upload failed';msg.style.color='#ef4444';return;}
+    msg.textContent='Uploaded — added to queue';msg.style.color='var(--muted)';
+    fileInput.value='';document.getElementById('stmt-bank').value='';
+    const listRes=await fetch('/api/pending-statements');
+    pendingStmts=await listRes.json();
+    renderStmtList();loadStmtCount();
+  }catch(e){msg.textContent='Upload failed';msg.style.color='#ef4444';}
+}
 
 async function loadStmtCount(){
   try{
     const res=await fetch('/api/pending-statements');
     pendingStmts=await res.json();
     const btn=document.getElementById('stmt-btn');
-    if(pendingStmts.length){
-      document.getElementById('stmt-count').textContent=pendingStmts.length;
-      btn.style.display='flex';
-    }else{
-      btn.style.display='none';
-    }
+    const countEl=document.getElementById('stmt-count');
+    btn.style.display='flex';
+    if(pendingStmts.length){countEl.textContent=pendingStmts.length;countEl.style.display='';}
+    else{countEl.style.display='none';}
     pendingStmts.filter(function(s){return s.unlock_status==='processing';}).forEach(function(s){
       pollUnlockStatus(s.id,0);
     });
@@ -936,21 +993,28 @@ function renderStmtList(){
     var label=s.bank!=='Unknown'?s.bank+' Statement':(s.filename||'unknown.pdf');
     var isProcessing=s.unlock_status==='processing';
     var isFailed=s.unlock_status==='failed';
+    var isExtracted=s.unlock_status==='extracted';
     var stateObj=s.unlock_result?(function(r){try{return JSON.parse(r);}catch(e){return {};}})(s.unlock_result):{};
     var errMsg=isFailed?stateObj.error:'';
     var hasPages=isFailed&&stateObj.pages&&stateObj.pages.length>0;
-    var nextPage=hasPages?(function(st){var done=st.pages_done||[];for(var i=0;i<st.pages.length;i++){if(done.indexOf(i)===-1)return i;}return 0;})(stateObj):0;
+    var doneSet=hasPages?(stateObj.pages_done||[]).map(function(e){return typeof e==='number'?e:e.page;}):[];
+    var nextPage=hasPages?(function(){for(var i=0;i<stateObj.pages.length;i++){if(doneSet.indexOf(i)===-1)return i;}return 0;})():0;
     var totalPages=hasPages?stateObj.pages.length:0;
+    var needsPw=isFailed&&!hasPages&&errMsg&&errMsg.toLowerCase().indexOf('password')!==-1;
     var progText=isProcessing&&stateObj.progress?(' ('+stateObj.progress+')'):'';
+    var btnLabel=isProcessing?('<span class="spinner"></span>Processing...'+esc(progText)):(isExtracted?'Use AI':(hasPages?('Retry (page '+(nextPage+1)+'/'+totalPages+')'):(needsPw?'Unlock':'Approve')));
+    var btnClick=isExtracted?'retryStmt('+s.id+')':(hasPages?'retryStmt('+s.id+')':(needsPw?'unlockStmt('+s.id+')':'approveStmt('+s.id+')'));
+    var extractedPageCount=isExtracted&&stateObj.pages?stateObj.pages.length:0;
     return '<div class="stmt-card" id="sc-'+s.id+'">'+
       '<div class="exp-desc">'+esc(label)+'</div>'+
       '<div class="stmt-meta">received '+dt+' &middot; '+esc(s.paid_by)+'</div>'+
+      (isExtracted?'<div style="font-size:.75rem;margin:.35rem 0;color:var(--muted)">Text extracted ('+extractedPageCount+' pages) — feed to ChatGPT via <code>/api/pending-statements/'+s.id+'/text</code></div>':'')+
       '<div class="stmt-pw">'+
-        (hasPages?'':('<input type="password" id="spw-'+s.id+'" placeholder="Enter PDF password" autocomplete="off"'+(isProcessing?' disabled':'')+'>'))+
-        '<button id="subtn-'+s.id+'" class="btn btn-primary" style="font-size:.8125rem;padding:.45rem .75rem;white-space:nowrap"'+(isProcessing?' disabled':'')+
-          (hasPages?' onclick="retryStmt('+s.id+')"':' onclick="unlockStmt('+s.id+')"')+'>'+
-          (isProcessing?('<span class="spinner"></span>Processing...'+esc(progText)):(hasPages?('Retry (page '+(nextPage+1)+'/'+totalPages+')'):'Unlock'))+
+        (needsPw?('<input type="password" id="spw-'+s.id+'" placeholder="Enter PDF password" autocomplete="off"'+(isProcessing?' disabled':'')+'>'):'<input type="password" id="spw-'+s.id+'" style="display:none" autocomplete="off">')+
+        '<button id="subtn-'+s.id+'" class="btn btn-primary" style="font-size:.8125rem;padding:.45rem .75rem;white-space:nowrap"'+(isProcessing?' disabled':'')+' onclick="'+btnClick+'">'+
+          btnLabel+
         '</button>'+
+        (isProcessing?('<button class="btn btn-secondary" style="font-size:.8125rem;padding:.45rem .75rem;white-space:nowrap" onclick="cancelStmt('+s.id+')">Stop</button>'):(isExtracted?('<button class="btn btn-secondary" style="font-size:.8125rem;padding:.45rem .75rem;white-space:nowrap" onclick="markProcessedStmt('+s.id+')">Mark Done</button>'):('')))+
         '<button id="rjbtn-'+s.id+'" class="btn btn-secondary" style="font-size:.8125rem;padding:.45rem .75rem;white-space:nowrap" onclick="rejectStmt('+s.id+')"'+(isProcessing?' disabled':'')+'>Reject</button>'+
       '</div>'+
       '<div id="smsg-'+s.id+'" style="font-size:.75rem;margin-top:.35rem;color:'+(isFailed?'#ef4444':'var(--muted)')+'">'+
@@ -963,12 +1027,16 @@ function stmtUnlockReset(id,errText,hasPages){
   var unlockBtn=document.getElementById('subtn-'+id);
   var rejectBtn=document.getElementById('rjbtn-'+id);
   var pwInput=document.getElementById('spw-'+id);
+  var needsPw=!hasPages&&errText&&errText.toLowerCase().indexOf('password')!==-1;
   if(hasPages){
     if(unlockBtn){unlockBtn.disabled=false;unlockBtn.innerHTML='Retry';unlockBtn.onclick=function(){retryStmt(id);};}
     if(pwInput)pwInput.style.display='none';
-  }else{
+  }else if(needsPw){
     if(unlockBtn){unlockBtn.disabled=false;unlockBtn.innerHTML='Unlock';unlockBtn.onclick=function(){unlockStmt(id);};}
     if(pwInput){pwInput.disabled=false;pwInput.style.display='';}
+  }else{
+    if(unlockBtn){unlockBtn.disabled=false;unlockBtn.innerHTML='Approve';unlockBtn.onclick=function(){approveStmt(id);};}
+    if(pwInput)pwInput.style.display='none';
   }
   if(rejectBtn)rejectBtn.disabled=false;
   if(errText){var msg=document.getElementById('smsg-'+id);if(msg){msg.textContent=errText;msg.style.color='#ef4444';}}
@@ -990,6 +1058,12 @@ function pollUnlockStatus(id,attempts){
       const res=await fetch('/api/pending-statements/'+id+'/status');
       const r=await res.json();
       if(r.status==='done'){stmtUnlockDone(id);return;}
+      if(r.status==='extracted'){
+        fetch('/api/pending-statements').then(function(res){return res.json();}).then(function(data){
+          pendingStmts=data;renderStmtList();
+        });
+        return;
+      }
       if(r.status==='failed'){
         var hasPages=r.result&&r.result.has_pages;
         if(hasPages){
@@ -1010,28 +1084,48 @@ function pollUnlockStatus(id,attempts){
   },2000);
 }
 
+async function approveStmt(id){
+  var unlockBtn=document.getElementById('subtn-'+id);
+  var rejectBtn=document.getElementById('rjbtn-'+id);
+  var msg=document.getElementById('smsg-'+id);
+  if(unlockBtn){unlockBtn.disabled=true;unlockBtn.innerHTML='<span class="spinner"></span>Queuing...';}
+  if(rejectBtn)rejectBtn.disabled=true;
+  if(msg){msg.textContent='';msg.style.color='var(--muted)';}
+  try{
+    const res=await fetch('/api/pending-statements/'+id+'/unlock',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({})
+    });
+    const r=await res.json();
+    if(!res.ok){stmtUnlockReset(id,r.error||'Failed',false);return;}
+    if(unlockBtn)unlockBtn.innerHTML='<span class="spinner"></span>Processing...';
+    if(msg){msg.textContent='You can close this page — processing continues in background';msg.style.color='var(--muted)';}
+    pollUnlockStatus(id,0);
+  }catch(e){stmtUnlockReset(id,'Network error',false);}
+}
+
 async function unlockStmt(id){
-  const pw=document.getElementById('spw-'+id).value.trim();
+  const pwInput=document.getElementById('spw-'+id);
+  const pw=pwInput?pwInput.value.trim():'';
   const msg=document.getElementById('smsg-'+id);
-  if(!pw){msg.textContent='Enter password first';msg.style.color='#ef4444';return;}
+  if(!pw){if(msg){msg.textContent='Enter password first';msg.style.color='#ef4444';}return;}
   const unlockBtn=document.getElementById('subtn-'+id);
   const rejectBtn=document.getElementById('rjbtn-'+id);
-  const pwInput=document.getElementById('spw-'+id);
-  unlockBtn.disabled=true;rejectBtn.disabled=true;pwInput.disabled=true;
-  unlockBtn.innerHTML='<span class="spinner"></span>Queuing...';
-  msg.textContent='';
+  if(unlockBtn){unlockBtn.disabled=true;unlockBtn.innerHTML='<span class="spinner"></span>Queuing...';}
+  if(rejectBtn)rejectBtn.disabled=true;
+  if(pwInput)pwInput.disabled=true;
+  if(msg){msg.textContent='';msg.style.color='var(--muted)';}
   try{
     const res=await fetch('/api/pending-statements/'+id+'/unlock',{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({password:pw})
     });
     const r=await res.json();
-    if(!res.ok){stmtUnlockReset(id,r.error||'Failed');return;}
-    unlockBtn.innerHTML='<span class="spinner"></span>Processing...';
-    msg.textContent='You can close this page — processing continues in background';
-    msg.style.color='var(--muted)';
+    if(!res.ok){stmtUnlockReset(id,r.error||'Failed',false);return;}
+    if(unlockBtn)unlockBtn.innerHTML='<span class="spinner"></span>Processing...';
+    if(msg){msg.textContent='You can close this page — processing continues in background';msg.style.color='var(--muted)';}
     pollUnlockStatus(id,0);
-  }catch(e){stmtUnlockReset(id,'Network error');}
+  }catch(e){stmtUnlockReset(id,'Network error',false);}
 }
 
 async function retryStmt(id){
@@ -1051,6 +1145,19 @@ async function retryStmt(id){
   }catch(e){stmtUnlockReset(id,'Network error',true);}
 }
 
+async function cancelStmt(id){
+  await fetch('/api/pending-statements/'+id+'/cancel',{method:'POST',headers:{'Content-Type':'application/json'}});
+  const res=await fetch('/api/pending-statements');
+  pendingStmts=await res.json();
+  renderStmtList();
+}
+
+async function markProcessedStmt(id){
+  await fetch('/api/pending-statements/'+id+'/mark-processed',{method:'POST',headers:{'Content-Type':'application/json'}});
+  pendingStmts=pendingStmts.filter(function(s){return s.id!==id;});
+  renderStmtList();loadStmtCount();
+}
+
 async function rejectStmt(id){
   await fetch('/api/pending-statements/'+id,{method:'DELETE'});
   pendingStmts=pendingStmts.filter(function(s){return s.id!==id;});
@@ -1058,8 +1165,75 @@ async function rejectStmt(id){
   loadStmtCount();
 }
 
+async function loadEmailCount(){
+  try{
+    const res=await fetch('/api/pending-emails');
+    pendingEmails=await res.json();
+    document.getElementById('email-count').textContent=pendingEmails.length;
+  }catch(e){}
+}
+
+function openEmailModal(){
+  renderEmailList();
+  document.getElementById('email-overlay').classList.add('open');
+}
+function closeEmailModal(){document.getElementById('email-overlay').classList.remove('open');}
+
+function renderEmailList(){
+  const el=document.getElementById('email-list');
+  if(!pendingEmails.length){
+    el.innerHTML='<div class="empty"><div class="empty-icon">&#x2705;</div><div>No pending emails</div></div>';
+    return;
+  }
+  el.innerHTML=pendingEmails.map(function(e){
+    return '<div class="pending-card" id="em-'+e.id+'">'+
+      '<div class="exp-desc">'+esc(e.source||'email')+' &middot; '+(e.received_date||e.created_at.slice(0,10))+'</div>'+
+      (e.paid_by?'<div style="font-size:.75rem;color:var(--muted);margin:.2rem 0">paid_by: '+esc(e.paid_by)+'</div>':'')+
+      '<div class="exp-raw" style="margin-top:.3rem;white-space:pre-wrap">'+esc(e.preview||'')+'</div>'+
+      '<div id="emsg-'+e.id+'" style="font-size:.75rem;color:var(--muted);margin-top:.3rem"></div>'+
+      '<div class="btn-row" style="margin-top:.625rem">'+
+        '<button id="epbtn-'+e.id+'" class="btn btn-primary" style="font-size:.75rem;padding:.3rem .6rem" onclick="processEmail('+e.id+')">&#x2728; Process with AI</button>'+
+        '<button class="btn btn-secondary" style="font-size:.75rem;padding:.3rem .6rem" onclick="markEmailDone('+e.id+')">Dismiss</button>'+
+      '</div>'+
+    '</div>';
+  }).join('');
+}
+
+async function processEmail(id){
+  const btn=document.getElementById('epbtn-'+id);
+  const msg=document.getElementById('emsg-'+id);
+  if(btn){btn.disabled=true;btn.innerHTML='<span class="spinner"></span>Processing...';}
+  if(msg){msg.style.color='var(--muted)';msg.textContent='Calling AI...';}
+  try{
+    const res=await fetch('/api/pending-emails/'+id+'/process',{method:'POST'});
+    const data=await res.json();
+    if(!res.ok){
+      if(btn){btn.disabled=false;btn.innerHTML='&#x2728; Process with AI';}
+      if(msg){msg.style.color='#ef4444';msg.textContent=data.error||'Failed';}
+    }else if(data.skipped){
+      pendingEmails=pendingEmails.filter(function(e){return e.id!==id;});
+      renderEmailList();loadEmailCount();loadPendingCount();
+    }else{
+      pendingEmails=pendingEmails.filter(function(e){return e.id!==id;});
+      renderEmailList();loadEmailCount();loadPendingCount();
+    }
+  }catch(e){
+    if(btn){btn.disabled=false;btn.innerHTML='&#x2728; Process with AI';}
+    if(msg){msg.style.color='#ef4444';msg.textContent='Network error';}
+  }
+}
+
+async function markEmailDone(id){
+  await fetch('/api/pending-emails/'+id,{method:'DELETE'});
+  pendingEmails=pendingEmails.filter(function(e){return e.id!==id;});
+  renderEmailList();
+  loadEmailCount();
+}
+
 loadStmtCount();
 setInterval(loadStmtCount,5*60*1000);
+loadEmailCount();
+setInterval(loadEmailCount,5*60*1000);
 load();
 </script>
 

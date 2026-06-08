@@ -44,6 +44,16 @@ CREATE TABLE IF NOT EXISTS pending_statements (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS pending_emails (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  raw_text TEXT NOT NULL,
+  source TEXT,
+  paid_by TEXT NOT NULL DEFAULT 'Prashant',
+  received_date TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS statement_imports (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   bank TEXT NOT NULL,

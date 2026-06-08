@@ -86,6 +86,7 @@ function pollGmail() {
   let skipped = 0;
 
   threads.forEach(thread => {
+    let threadQueued = 0;
     thread.getMessages().forEach(msg => {
       const body = msg.getPlainBody() || msg.getBody().replace(/<[^>]+>/g, ' ');
       const subject = msg.getSubject();
@@ -103,19 +104,20 @@ function pollGmail() {
         });
 
         const result = JSON.parse(response.getContentText());
-        if (result.pending) {
+        if (result.queued) {
           saved++;
-          Logger.log('Queued: ' + JSON.stringify(result.expense));
+          threadQueued++;
+          Logger.log('Queued: ' + subject + ' (id=' + result.id + ')');
         } else {
           skipped++;
-          Logger.log('Skipped: ' + subject);
+          Logger.log('Skipped: ' + subject + (result.reason ? ' — ' + result.reason : (result.error ? ' — ' + result.error : '')));
         }
       } catch (e) {
         Logger.log('Error processing "' + subject + '": ' + e);
       }
     });
 
-    thread.addLabel(label);
+    if (threadQueued > 0) thread.addLabel(label);
   });
 
   Logger.log('Done. Saved: ' + saved + ', Skipped: ' + skipped);
@@ -145,6 +147,7 @@ function backfill() {
       break;
     }
     var thread = allThreads[i];
+    var threadQueued = 0;
     thread.getMessages().forEach(function(msg) {
       if (processed >= BACKFILL_BATCH) return;
       var body = msg.getPlainBody() || msg.getBody().replace(/<[^>]+>/g, ' ');
@@ -158,12 +161,12 @@ function backfill() {
           muteHttpExceptions: true,
         });
         var r = JSON.parse(res.getContentText());
-        if (r.pending) { saved++; Logger.log('Queued: ' + r.expense.description); }
-        else { skipped++; Logger.log('Skipped: ' + msg.getSubject()); }
+        if (r.queued) { saved++; threadQueued++; Logger.log('Queued: ' + msg.getSubject() + ' (id=' + r.id + ')'); }
+        else { skipped++; Logger.log('Skipped: ' + msg.getSubject() + (r.reason ? ' — ' + r.reason : (r.error ? ' — ' + r.error : ''))); }
         processed++;
       } catch(e) { Logger.log('Error: ' + e); }
     });
-    thread.addLabel(label);
+    if (threadQueued > 0) thread.addLabel(label);
   }
 
   Logger.log('Batch done. Queued: ' + saved + ', Skipped: ' + skipped + '. Run again if more remain.');

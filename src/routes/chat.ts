@@ -118,7 +118,14 @@ chat.get('/api/openapi.json', (c) => {
       description: 'Personal expense tracker for Prashant & Prayashi. paid_by: Prashant or Prayashi. who_for: Prashant, Prayashi, or Common (Common = split equally). category: open-ended string — use common ones (Food, Travel, Subscription, Shopping, Rent, Medical, Entertainment, Utilities, Groceries, Education, Insurance, EMI, Personal Care, Gifts) or create a new one if none fit.',
     },
     servers: [{ url: origin }],
+    security: [{ bearerAuth: [] }],
     components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+        },
+      },
       schemas: {
         Expense: {
           type: 'object',
@@ -159,9 +166,20 @@ chat.get('/api/openapi.json', (c) => {
         put: { operationId: 'editExpense', summary: 'Edit an existing expense by id', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/ExpenseInput' } } } }, responses: { '200': { description: 'Updated' } } },
         delete: { operationId: 'deleteExpense', summary: 'Delete an expense by id', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], responses: { '200': { description: 'Deleted' } } },
       },
-      '/api/pending': { get: { operationId: 'listPending', summary: 'List pending expenses awaiting review', responses: { '200': { description: 'Array of pending expenses', content: { 'application/json': { schema: { type: 'array', items: { '$ref': '#/components/schemas/Expense' } } } } } } } },
+      '/api/pending': {
+        get: { operationId: 'listPending', summary: 'List pending expenses awaiting review', responses: { '200': { description: 'Array of pending expenses', content: { 'application/json': { schema: { type: 'array', items: { '$ref': '#/components/schemas/Expense' } } } } } } },
+        post: { operationId: 'addPending', summary: 'Add an expense to the pending review queue — use this after parsing a bank statement', requestBody: { required: true, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ExpenseInput' } } } }, responses: { '200': { description: 'Created with id' } } },
+      },
       '/api/pending/{id}/approve': { post: { operationId: 'approvePending', summary: 'Approve a pending expense', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], requestBody: { required: false, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ExpenseInput' } } } }, responses: { '200': { description: 'Approved' } } } },
       '/api/pending/{id}': { delete: { operationId: 'rejectPending', summary: 'Reject and discard a pending expense', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], responses: { '200': { description: 'Rejected' } } } },
+      '/api/pending-emails': { get: { operationId: 'listPendingEmails', summary: 'List raw emails queued for parsing — fetch these, extract expense transactions, add via addPending, then mark each done via markEmailProcessed', responses: { '200': { description: 'Array of pending emails with id, source, paid_by, received_date, created_at, preview (first 200 chars)' } } } },
+      '/api/pending-emails/{id}': {
+        get: { operationId: 'getEmailText', summary: 'Get full raw text of a single pending email — use this to read the complete email content before parsing', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], responses: { '200': { description: 'Full email with raw_text field' } } },
+        delete: { operationId: 'markEmailProcessed', summary: 'Mark a pending email as processed — call this after adding all transactions from that email via addPending', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], responses: { '200': { description: 'Marked processed' } } },
+      },
+      '/api/pending-statements': { get: { operationId: 'listPendingStatements', summary: 'List PDF bank statements pending processing', responses: { '200': { description: 'Array of pending statements with id, bank, filename, paid_by, unlock_status' } } } },
+      '/api/pending-statements/{id}/text': { get: { operationId: 'getStatementText', summary: 'Get extracted text from a PDF statement — call this to get the raw content, then parse transactions and add via addPending', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], responses: { '200': { description: 'Statement text with pages array and full_text joined string' } } } },
+      '/api/pending-statements/{id}/mark-processed': { post: { operationId: 'markStatementProcessed', summary: 'Mark a PDF statement as processed — call this after all transactions have been added via addPending', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], responses: { '200': { description: 'Marked as processed, hidden from list' } } } },
     },
   })
 })
