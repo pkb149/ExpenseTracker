@@ -144,6 +144,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
     <button class="pending-btn" onclick="openPendingModal()" id="pending-btn">
       Review <span class="badge-count" id="pending-count">0</span>
     </button>
+    <a href="https://chatgpt.com/g/g-6a240ae10b248191b4ac7ef0bb3bf5c4-expense-tracker-assistant" target="_blank" rel="noopener" class="export-btn" style="text-decoration:none">&#x1F916; GPT</a>
     <button class="export-btn" onclick="exportCSV()">Export CSV</button>
     <a href="/auth/logout" class="export-btn" style="text-decoration:none">Logout</a>
   </div>
@@ -715,7 +716,13 @@ async function submitForm(ev){
   if(editingId){
     await fetch('/api/expenses/'+editingId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
   }else{
-    await fetch('/api/expenses',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+    const res=await fetch('/api/expenses',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+    if(res.status===409){
+      const err=await res.json();
+      btn.disabled=false;
+      if(!confirm(err.message+'\\n\\nSave anyway?'))return;
+      await fetch('/api/expenses',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...data,force:true})});
+    }
   }
   btn.disabled=false;
   closeFormModal();
@@ -778,7 +785,12 @@ async function submitSmartForm(ev){
     raw_input:document.getElementById('smart-text').value.trim(),
     source:'smart'
   };
-  await fetch('/api/expenses',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+  const res=await fetch('/api/expenses',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+  if(res.status===409){
+    const err=await res.json();
+    if(!confirm(err.message+'\\n\\nSave anyway?'))return;
+    await fetch('/api/expenses',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...data,force:true})});
+  }
   closeSmartModal();
   load();
 }
@@ -904,7 +916,12 @@ async function approvePending(id){
     who_for:document.getElementById('pwf-'+id).value,
     category:document.getElementById('pcat-'+id).value,
   };
-  await fetch('/api/pending/'+id+'/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(overrides)});
+  const res=await fetch('/api/pending/'+id+'/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(overrides)});
+  if(res.status===409){
+    const err=await res.json();
+    if(!confirm(err.message+'\\n\\nApprove anyway?'))return;
+    await fetch('/api/pending/'+id+'/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...overrides,force:true})});
+  }
   pendingItems=pendingItems.filter(p=>p.id!==id);
   renderPendingList();
   loadPendingCount();

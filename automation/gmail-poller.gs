@@ -47,11 +47,13 @@ const WATCHED_SENDERS = [
   'noreply@savana.in',
   'update@savana.in',
   'alerts@hdfcbank.com',
+  'alerts@hdfcbank.bank.in',
   'alerts@icicibank.com',
   'alerts@axisbank.com',
   'alerts@sbi.co.in',
   'noreply@paytm.com',
   'no-reply@phonepe.com',
+  'scapiacards@federalbank.co.in',
 ];
 
 function setup() {
@@ -74,7 +76,7 @@ function setup() {
 function pollGmail() {
   const label = GmailApp.getUserLabelByName(LABEL_NAME) || GmailApp.createLabel(LABEL_NAME);
   const senderQuery = WATCHED_SENDERS.map(s => 'from:' + s).join(' OR ');
-  const keywordQuery = 'subject:(order OR invoice OR payment OR refund OR "order confirmed" OR "order placed" OR "amount debited" OR "amount credited" OR "successfully paid") -label:' + LABEL_NAME + ' newer_than:2h';
+  const keywordQuery = 'subject:(order OR invoice OR payment OR refund OR transaction OR txn OR "order confirmed" OR "order placed" OR "amount debited" OR "amount credited" OR "successfully paid") -label:' + LABEL_NAME + ' newer_than:2h';
   const seen = new Set();
   const allThreads = [
     ...GmailApp.search('(' + senderQuery + ') -label:' + LABEL_NAME + ' newer_than:2h'),
@@ -130,7 +132,7 @@ const BACKFILL_BATCH = 40;
 function backfill() {
   const label = GmailApp.getUserLabelByName(LABEL_NAME) || GmailApp.createLabel(LABEL_NAME);
   const senderQuery = WATCHED_SENDERS.map(s => 'from:' + s).join(' OR ');
-  const keywordQuery = 'subject:(order OR invoice OR payment OR refund OR "order confirmed" OR "order placed" OR "amount debited" OR "amount credited" OR "successfully paid") -label:' + LABEL_NAME + ' newer_than:37d';
+  const keywordQuery = 'subject:(order OR invoice OR payment OR refund OR transaction OR txn OR "order confirmed" OR "order placed" OR "amount debited" OR "amount credited" OR "successfully paid") -label:' + LABEL_NAME + ' newer_than:37d';
   const seen = new Set();
   const allThreads = [
     ...GmailApp.search('(' + senderQuery + ') -label:' + LABEL_NAME + ' newer_than:37d'),
