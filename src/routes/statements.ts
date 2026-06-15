@@ -230,7 +230,7 @@ statements.post('/api/statement-upload-manual', async (c) => {
 statements.get('/api/pending-statements', async (c) => {
   // TTL: hard-delete processed/rejected rows older than 1 year
   await c.env.DB.prepare(
-    "DELETE FROM pending_statements WHERE unlock_status IN ('processed','rejected') AND processed_at < datetime('now', '-1 year')"
+    "DELETE FROM pending_statements WHERE unlock_status='processed' AND processed_at < datetime('now', '-1 year')"
   ).run()
   const { results } = await c.env.DB.prepare(
     "SELECT id, bank, filename, paid_by, email_date, unlock_status, unlock_result, created_at FROM pending_statements WHERE unlock_status NOT IN ('processed','rejected') ORDER BY created_at DESC"
@@ -599,9 +599,7 @@ statements.post('/api/pending-statements/:id/mark-processed', async (c) => {
 })
 
 statements.delete('/api/pending-statements/:id', async (c) => {
-  await c.env.DB.prepare(
-    "UPDATE pending_statements SET unlock_status='rejected', pdf_data=NULL, unlock_result=NULL, processed_at=datetime('now') WHERE id=?"
-  ).bind(c.req.param('id')).run()
+  await c.env.DB.prepare('DELETE FROM pending_statements WHERE id=?').bind(c.req.param('id')).run()
   return c.json({ ok: true })
 })
 
