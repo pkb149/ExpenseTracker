@@ -152,6 +152,7 @@ chat.get('/api/openapi.json', (c) => {
             category: { type: 'string', description: 'Expense category — free text, any string is accepted.' },
             who_for: { type: 'string', enum: ['Prashant', 'Prayashi', 'Common'], description: '"Common" means split equally between both' },
             raw_input: { type: 'string', description: 'Exact original text the user said or typed — store verbatim' },
+            force: { type: 'boolean', description: 'Set to true to bypass duplicate detection and save anyway. Only use after receiving a 409 duplicate_detected error.' },
           },
         },
       },
@@ -160,7 +161,7 @@ chat.get('/api/openapi.json', (c) => {
       '/api/categories': { get: { operationId: 'listCategories', summary: 'List all known expense categories', responses: { '200': { description: 'Sorted array of category strings', content: { 'application/json': { schema: { type: 'array', items: { type: 'string' } } } } } } } },
       '/api/expenses': {
         get: { operationId: 'listExpenses', summary: 'List expenses for a month', parameters: [{ name: 'month', in: 'query', schema: { type: 'string' }, description: 'YYYY-MM format' }], responses: { '200': { description: 'Array of expenses', content: { 'application/json': { schema: { type: 'array', items: { '$ref': '#/components/schemas/Expense' } } } } } } },
-        post: { operationId: 'addExpense', summary: 'Add a new expense', requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/ExpenseInput' } } } }, responses: { '200': { description: 'Created with id' } } },
+        post: { operationId: 'addExpense', summary: 'Add a new expense. Returns 409 if a duplicate amount exists in the same month — read the message field, confirm with user, then retry with "force": true to override.', requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/ExpenseInput' } } } }, responses: { '200': { description: 'Created with id' }, '409': { description: 'Duplicate detected — response includes existing transaction details and instructions to override with force:true' } } },
       },
       '/api/expenses/{id}': {
         put: { operationId: 'editExpense', summary: 'Edit an existing expense by id', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/ExpenseInput' } } } }, responses: { '200': { description: 'Updated' } } },
@@ -170,7 +171,7 @@ chat.get('/api/openapi.json', (c) => {
         get: { operationId: 'listPending', summary: 'List pending expenses awaiting review', responses: { '200': { description: 'Array of pending expenses', content: { 'application/json': { schema: { type: 'array', items: { '$ref': '#/components/schemas/Expense' } } } } } } },
         post: { operationId: 'addPending', summary: 'Add an expense to the pending review queue — use this after parsing a bank statement', requestBody: { required: true, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ExpenseInput' } } } }, responses: { '200': { description: 'Created with id' } } },
       },
-      '/api/pending/{id}/approve': { post: { operationId: 'approvePending', summary: 'Approve a pending expense', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], requestBody: { required: false, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ExpenseInput' } } } }, responses: { '200': { description: 'Approved' } } } },
+      '/api/pending/{id}/approve': { post: { operationId: 'approvePending', summary: 'Approve a pending expense. Returns 409 if a duplicate amount exists in the same month — read the message field, confirm with user, then retry with "force": true to override.', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], requestBody: { required: false, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ExpenseInput' } } } }, responses: { '200': { description: 'Approved' }, '409': { description: 'Duplicate detected — response includes existing transaction details and instructions to override with force:true' } } } },
       '/api/pending/{id}': { delete: { operationId: 'rejectPending', summary: 'Reject and discard a pending expense', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer' } }], responses: { '200': { description: 'Rejected' } } } },
       '/api/pending-emails': { get: { operationId: 'listPendingEmails', summary: 'List raw emails queued for parsing — fetch these, extract expense transactions, add via addPending, then mark each done via markEmailProcessed', responses: { '200': { description: 'Array of pending emails with id, source, paid_by, received_date, created_at, preview (first 200 chars)' } } } },
       '/api/pending-emails/{id}': {

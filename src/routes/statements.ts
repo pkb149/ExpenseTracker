@@ -192,58 +192,48 @@ statements.post('/api/statement-upload', async (c) => {
   }>()
   if (!pdf_base64) return c.json({ error: 'pdf_base64 required' }, 400)
   if (!bank?.trim()) return c.json({ error: 'bank required' }, 400)
-  if (!c.env.OPENROUTER_API_KEY) return c.json({ error: 'OPENROUTER_API_KEY not set' }, 500)
-
-  let passwords: Record<string, string> = {}
-  try { passwords = JSON.parse(c.env.PDF_PASSWORDS ?? '{}') } catch {}
-  const password = passwords[bank] ?? ''
 
   const pdfBuffer = await fetch(`data:application/octet-stream;base64,${pdf_base64.replace(/[\s]/g, '')}`).then(r => r.arrayBuffer())
-  const pdfStorageCopy = pdfBuffer.slice(0)
   const pdfBytes = new Uint8Array(pdfBuffer)
   if (!pdfBytes.length) return c.json({ error: 'pdf_base64 decoded to empty — invalid base64 input' }, 400)
 
-  let text: string
   try {
-    const pdfDoc = await getDocumentProxy(pdfBytes, password ? { password } : {})
-    const { text: pages } = await extractText(pdfDoc)
-    text = pages.join('\n')
-  } catch (e: any) {
-    const isPasswordError = e?.name === 'PasswordException' || String(e?.message ?? e).toLowerCase().includes('password')
-    if (isPasswordError) {
-      try {
-        const { meta } = await c.env.DB.prepare(
-          'INSERT INTO pending_statements (bank, filename, paid_by, pdf_data, email_date) VALUES (?,?,?,?,?)'
-        ).bind(bank, filename ?? null, paid_by ?? 'Prashant', pdfStorageCopy, email_date ?? null).run()
-        return c.json({ password_required: true, id: meta.last_row_id, bank, filename })
-      } catch (dbErr: any) {
-        return c.json({ error: `PDF needs password - D1 store failed: ${String(dbErr?.message ?? dbErr)} (${pdfBytes.length} bytes)` }, 400)
-      }
-    }
-    return c.json({ error: `PDF extraction failed: ${String(e?.message ?? e)}` }, 500)
+    const { meta } = await c.env.DB.prepare(
+      'INSERT INTO pending_statements (bank, filename, paid_by, pdf_data, email_date) VALUES (?,?,?,?,?)'
+    ).bind(bank, filename ?? null, paid_by ?? 'Prashant', pdfBuffer, email_date ?? null).run()
+    return c.json({ queued: true, id: meta.last_row_id, bank, filename })
+  } catch (dbErr: any) {
+    return c.json({ error: `D1 store failed: ${String(dbErr?.message ?? dbErr)} (${pdfBytes.length} bytes)` }, 500)
   }
+})
 
-  if (!text.trim()) return c.json({ error: 'No text extracted from PDF (scanned image PDF?)' }, 400)
+statements.post('/api/statement-upload-manual', async (c) => {
+  const { bank, pdf_base64, paid_by, filename } = await c.req.json<{
+    bank: string; pdf_base64: string; paid_by?: string; filename?: string
+  }>()
+  if (!pdf_base64) return c.json({ error: 'pdf_base64 required' }, 400)
+
+  const pdfBuffer = await fetch(`data:application/octet-stream;base64,${pdf_base64.replace(/[\s]/g, '')}`).then(r => r.arrayBuffer())
+  const pdfBytes = new Uint8Array(pdfBuffer)
+  if (!pdfBytes.length) return c.json({ error: 'pdf_base64 decoded to empty' }, 400)
 
   try {
-    const result = await reconcileStatement(
-      c.env.DB, c.env.OPENROUTER_API_KEY,
-      c.env.LLM_MODEL ?? 'openai/gpt-oss-120b:free',
-      bank, text, paid_by ?? 'Prashant'
-    )
-    return c.json(result)
-  } catch (e: any) {
-    return c.json({ error: e.message }, 500)
+    const { meta } = await c.env.DB.prepare(
+      'INSERT INTO pending_statements (bank, filename, paid_by, pdf_data) VALUES (?,?,?,?)'
+    ).bind(bank?.trim() || 'Unknown', filename ?? null, paid_by ?? 'Prashant', pdfBuffer).run()
+    return c.json({ queued: true, id: meta.last_row_id })
+  } catch (dbErr: any) {
+    return c.json({ error: `Store failed: ${String(dbErr?.message ?? dbErr)}` }, 500)
   }
 })
 
 statements.get('/api/pending-statements', async (c) => {
-  // TTL: hard-delete processed rows older than 1 year
+  // TTL: hard-delete processed/rejected rows older than 1 year
   await c.env.DB.prepare(
-    "DELETE FROM pending_statements WHERE unlock_status='processed' AND processed_at < datetime('now', '-1 year')"
+    "DELETE FROM pending_statements WHERE unlock_status IN ('processed','rejected') AND processed_at < datetime('now', '-1 year')"
   ).run()
   const { results } = await c.env.DB.prepare(
-    "SELECT id, bank, filename, paid_by, email_date, unlock_status, unlock_result, created_at FROM pending_statements WHERE unlock_status != 'processed' ORDER BY created_at DESC"
+    "SELECT id, bank, filename, paid_by, email_date, unlock_status, unlock_result, created_at FROM pending_statements WHERE unlock_status NOT IN ('processed','rejected') ORDER BY created_at DESC"
   ).all()
   return c.json(results)
 })
@@ -293,6 +283,28 @@ statements.get('/api/pending-statements/:id/status', async (c) => {
   return c.json({ status: row.unlock_status, result })
 })
 
+statements.get('/api/pending-statements/:id/text', async (c) => {
+  const id = c.req.param('id')
+  const { results } = await c.env.DB.prepare(
+    'SELECT bank, filename, paid_by, unlock_status, unlock_result FROM pending_statements WHERE id=?'
+  ).bind(id).all()
+  if (!results.length) return c.json({ error: 'Not found' }, 404)
+  const row = results[0] as { bank: string; filename: string; paid_by: string; unlock_status: string; unlock_result: string | null }
+  if (!row.unlock_result) return c.json({ error: 'PDF not yet extracted — approve it first' }, 400)
+  let state: { pages?: string[] } = {}
+  try { state = JSON.parse(row.unlock_result) } catch {}
+  if (!state.pages?.length) return c.json({ error: 'No pages extracted yet' }, 400)
+  return c.json({
+    id: parseInt(id),
+    bank: row.bank,
+    filename: row.filename,
+    paid_by: row.paid_by,
+    page_count: state.pages.length,
+    pages: state.pages,
+    full_text: state.pages.join('\n\n--- PAGE BREAK ---\n\n'),
+  })
+})
+
 async function normalisePdfData(raw: unknown): Promise<Uint8Array | null> {
   let arr: number[]
   if (raw instanceof ArrayBuffer) {
@@ -322,8 +334,7 @@ async function extractPdfText(pdfBytes: Uint8Array, password: string): Promise<s
 
 statements.post('/api/pending-statements/:id/unlock', async (c) => {
   const id = c.req.param('id')
-  const { password } = await c.req.json<{ password: string }>()
-  if (!password) return c.json({ error: 'password required' }, 400)
+  const body = await c.req.json<{ password?: string }>().catch(() => ({} as { password?: string }))
   if (!c.env.OPENROUTER_API_KEY) return c.json({ error: 'OPENROUTER_API_KEY not set' }, 500)
 
   const { results } = await c.env.DB.prepare(
@@ -331,8 +342,12 @@ statements.post('/api/pending-statements/:id/unlock', async (c) => {
   ).bind(id).all()
   if (!results.length) return c.json({ error: 'Not found' }, 404)
 
-  const row = results[0] as { unlock_status: string }
+  const row = results[0] as { bank: string; unlock_status: string }
   if (row.unlock_status === 'processing') return c.json({ error: 'Already processing' }, 409)
+
+  let passwords: Record<string, string> = {}
+  try { passwords = JSON.parse(c.env.PDF_PASSWORDS ?? '{}') } catch {}
+  const password = body.password || passwords[row.bank] || ''
 
   await c.env.DB.prepare(
     "UPDATE pending_statements SET unlock_status='processing', unlock_result=? WHERE id=?"
@@ -365,12 +380,18 @@ statements.post('/api/pending-statements/:id/retry', async (c) => {
 
   const row = results[0] as { unlock_status: string; unlock_result: string | null }
   if (row.unlock_status === 'processing') return c.json({ error: 'Already processing' }, 409)
+  if (!['failed', 'extracted'].includes(row.unlock_status)) return c.json({ error: `Cannot retry from status: ${row.unlock_status}` }, 400)
 
   let state: Partial<ProcessState> = {}
   try { state = JSON.parse(row.unlock_result ?? '{}') } catch {}
   if (!state.pages?.length) return c.json({ error: 'No extracted pages — unlock with password first' }, 400)
 
-  const doneIndices = new Set((state.pages_done ?? []).map(e => typeof e === 'number' ? e : e.page))
+  // Exclude exhausted pages from doneIndices so they get re-attempted on retry
+  const doneIndices = new Set(
+    (state.pages_done ?? [])
+      .filter(e => !(typeof e === 'object' && (e as PageDoneEntry).model === 'exhausted'))
+      .map(e => typeof e === 'number' ? e : (e as PageDoneEntry).page)
+  )
   const nextPage = state.pages.findIndex((_, i) => !doneIndices.has(i))
   if (nextPage === -1) return c.json({ error: 'All pages already processed' }, 400)
 
@@ -440,36 +461,27 @@ statements.post('/api/pending-statements/:id/process-async', async (c) => {
     }
 
     await c.env.DB.prepare(
-      "UPDATE pending_statements SET unlock_result=? WHERE id=?"
-    ).bind(JSON.stringify({ started_at: new Date().toISOString(), pages, pages_done: [], page: 0 }), id).run()
-
-    const subrequestUrl = `${origin}/api/pending-statements/${id}/process-async`
-    log.debug(`[process-async] firing subrequest to ${subrequestUrl} stage=reconcile page=0`)
-    const subreq = fetch(subrequestUrl, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${c.env.INGEST_TOKEN}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ stage: 'reconcile', page: 0 }),
-    })
-    subreq.then(r => log.debug(`[process-async] subrequest reconcile/0 responded ${r.status}`))
-        .catch(e => log.error(`[process-async] subrequest reconcile/0 FAILED: ${e?.message}`))
-    c.executionCtx.waitUntil(subreq)
+      "UPDATE pending_statements SET unlock_status='extracted', unlock_result=? WHERE id=?"
+    ).bind(JSON.stringify({ pages, pages_done: [], page: 0 }), id).run()
+    log.debug(`[process-async] extracted ${pages.length} pages id=${id}, ready for ChatGPT`)
     return c.json({ ok: true })
   }
 
   // Stage 2: process one page at a time via LLM
   if (body.stage === 'reconcile') {
     const { results } = await c.env.DB.prepare(
-      'SELECT bank, paid_by, unlock_result FROM pending_statements WHERE id=?'
+      'SELECT bank, paid_by, unlock_status, unlock_result FROM pending_statements WHERE id=?'
     ).bind(id).all()
     if (!results.length) { log.debug(`[process-async] reconcile id=${id} not found — already deleted?`); return c.json({ ok: true }) }
 
-    const row = results[0] as { bank: string; paid_by: string; unlock_result: string }
+    const row = results[0] as { bank: string; paid_by: string; unlock_status: string; unlock_result: string }
+    if (row.unlock_status !== 'processing') { log.debug(`[process-async] reconcile id=${id} status=${row.unlock_status} — cancelled or reset, bailing`); return c.json({ ok: true }) }
     let state: ProcessState
     try { state = JSON.parse(row.unlock_result) } catch { await failWith('Corrupt state'); return c.json({ ok: true }) }
 
     const MODEL_LIST = [
-      'openrouter/free',
-      'google/gemma-4-31b-it:free',
+      // 'openrouter/free',
+      // 'google/gemma-4-31b-it:free',
       c.env.LLM_MODEL ?? 'openai/gpt-oss-120b:free',
     ]
     const pageIdx = body.page ?? 0
@@ -486,11 +498,13 @@ statements.post('/api/pending-statements/:id/process-async', async (c) => {
     await writeState()
     log.debug(`[process-async] reconcile id=${id} page=${pageIdx} model_idx=${pageModelIdx}/${MODEL_LIST.length - 1} chars=${pageText?.length ?? 0}`)
 
-    // All models exhausted for this page — skip it
+    // All models exhausted for this page — reset to model 0 and wait for auto-retry (don't skip pages with content)
     if (pageModelIdx >= MODEL_LIST.length) {
-      log.debug(`[process-async] page=${pageIdx} all models exhausted, skipping`)
-      const newPagesDone = [...(state.pages_done ?? []), { page: pageIdx, model: 'exhausted' }]
-      return await chainNext(pageIdx, newPagesDone, 0)
+      log.debug(`[process-async] page=${pageIdx} all models exhausted, cycling back to model 0`)
+      await writeState({ llm_status: `all models exhausted, cycling back to model 0` })
+      await c.env.DB.prepare("UPDATE pending_statements SET unlock_result=json_set(unlock_result,'$.page_model_idx',0) WHERE id=?")
+        .bind(id).run()
+      return c.json({ ok: true })
     }
 
     let llmSucceeded = false
@@ -560,8 +574,34 @@ statements.post('/api/pending-statements/:id/process-async', async (c) => {
   return c.json({ error: 'unknown stage' }, 400)
 })
 
+statements.post('/api/pending-statements/:id/cancel', async (c) => {
+  const id = c.req.param('id')
+  const { results } = await c.env.DB.prepare('SELECT unlock_status, unlock_result FROM pending_statements WHERE id=?').bind(id).all()
+  if (!results.length) return c.json({ error: 'Not found' }, 404)
+  const row = results[0] as { unlock_status: string; unlock_result: string | null }
+  let state: { pages?: string[]; pages_done?: unknown[] } = {}
+  try { state = JSON.parse(row.unlock_result ?? '{}') } catch {}
+  if (state.pages?.length) {
+    await c.env.DB.prepare("UPDATE pending_statements SET unlock_status='extracted', unlock_result=? WHERE id=?")
+      .bind(JSON.stringify({ pages: state.pages, pages_done: state.pages_done ?? [], page: 0 }), id).run()
+  } else {
+    await c.env.DB.prepare("UPDATE pending_statements SET unlock_status='failed', unlock_result='{\"error\":\"Cancelled\"}' WHERE id=?").bind(id).run()
+  }
+  return c.json({ ok: true })
+})
+
+statements.post('/api/pending-statements/:id/mark-processed', async (c) => {
+  const id = c.req.param('id')
+  const { results } = await c.env.DB.prepare('SELECT id FROM pending_statements WHERE id=?').bind(id).all()
+  if (!results.length) return c.json({ error: 'Not found' }, 404)
+  await c.env.DB.prepare("UPDATE pending_statements SET unlock_status='processed', processed_at=datetime('now'), unlock_result=NULL WHERE id=?").bind(id).run()
+  return c.json({ ok: true })
+})
+
 statements.delete('/api/pending-statements/:id', async (c) => {
-  await c.env.DB.prepare('DELETE FROM pending_statements WHERE id=?').bind(c.req.param('id')).run()
+  await c.env.DB.prepare(
+    "UPDATE pending_statements SET unlock_status='rejected', pdf_data=NULL, unlock_result=NULL, processed_at=datetime('now') WHERE id=?"
+  ).bind(c.req.param('id')).run()
   return c.json({ ok: true })
 })
 

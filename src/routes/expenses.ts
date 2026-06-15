@@ -13,7 +13,20 @@ expenses.get('/api/expenses', async (c) => {
 })
 
 expenses.post('/api/expenses', async (c) => {
-  const b = await c.req.json<ExpenseBody>()
+  const b = await c.req.json<ExpenseBody & { force?: boolean }>()
+  if (!b.force) {
+    const { results: dups } = await c.env.DB.prepare(
+      "SELECT * FROM expenses WHERE ABS(amount-?) < 0.01 AND strftime('%Y-%m',date)=strftime('%Y-%m',?) LIMIT 1"
+    ).bind(b.amount, b.date).all() as { results: Record<string, unknown>[] }
+    if (dups.length) {
+      const d = dups[0]
+      return c.json({
+        error: 'duplicate_detected',
+        existing: d,
+        message: `Possible duplicate: ₹${d.amount} already exists in this month — "${d.description}" on ${d.date}, paid by ${d.paid_by}, for ${d.who_for} (id=${d.id}). To override, add "force": true to your request body.`,
+      }, 409)
+    }
+  }
   const { meta } = await c.env.DB.prepare(
     'INSERT INTO expenses (description,amount,date,paid_by,category,who_for,is_marriage_related,source,raw_input) VALUES (?,?,?,?,?,?,?,?,?)'
   ).bind(b.description, b.amount, b.date, b.paid_by, b.category, b.who_for, b.is_marriage_related ? 1 : 0, b.source ?? 'manual', b.raw_input ?? null).run()
