@@ -504,7 +504,7 @@ function renderSummary(){
         '<div class="settle-detail">Common &#x20B9;'+fmt(totalCommon)+
           ' &nbsp;·&nbsp; Prashant paid &#x20B9;'+fmt(cmnP)+
           ' &nbsp;·&nbsp; Prayashi paid &#x20B9;'+fmt(cmnQ)+
-          (pForQ||qForP?' &nbsp;·&nbsp; Cross ₹'+fmt(pForQ)+' (P→Q) / ₹'+fmt(qForP)+' (Q→P)':'')+'</div>'+
+          (pForQ||qForP?' &nbsp;·&nbsp; Prashant→Prayashi ₹'+fmt(pForQ)+' · Prayashi→Prashant ₹'+fmt(qForP):'')+'</div>'+
       '</div>';
     document.getElementById('settlement-section').style.display='block';
   }else{
