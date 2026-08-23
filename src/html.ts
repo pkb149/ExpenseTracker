@@ -445,21 +445,28 @@ async function load(){
   try{
     const res=await fetch('/api/expenses?month='+currentMonth);
     expenses=await res.json();
-    refreshCategoryDropdowns();
+    await refreshCategoryDropdowns();
     renderSummary();
     renderList();
     restoreChat();
   }catch(e){console.error(e);}
 }
 
-function refreshCategoryDropdowns(){
-  const usedCats=[...new Set(expenses.map(e=>e.category).filter(Boolean))];
-  const allCats=[...new Set([...DEFAULT_CATS,...usedCats])].sort();
+let allCatsCache=null;
+async function refreshCategoryDropdowns(){
+  try{
+    if(!allCatsCache){
+      const r=await fetch('/api/categories');
+      if(r.ok)allCatsCache=await r.json();
+    }
+  }catch(e){}
+  const monthCats=[...new Set(expenses.map(e=>e.category).filter(Boolean))];
+  const combined=[...new Set([...DEFAULT_CATS,...(allCatsCache||[]),...monthCats])].sort();
   for(const id of['f-cat','s-cat']){
     const sel=document.getElementById(id);
     if(!sel)continue;
     const cur=sel.value;
-    sel.innerHTML=allCats.map(c=>'<option value="'+esc(c)+'">'+esc(c)+'</option>').join('');
+    sel.innerHTML=combined.map(c=>'<option value="'+esc(c)+'">'+esc(c)+'</option>').join('');
     if(cur)sel.value=cur;
   }
 }
@@ -906,6 +913,7 @@ function jumpToMonthOf(dateStr){
 function ensureCategoryOption(selectId,value){
   const sel=document.getElementById(selectId);
   if(!sel||!value)return;
+  if(allCatsCache&&allCatsCache.indexOf(value)===-1)allCatsCache.push(value);
   const exists=[...sel.options].some(o=>o.value===value);
   if(!exists){const o=document.createElement('option');o.value=o.textContent=value;sel.appendChild(o);}
   sel.value=value;

@@ -3,6 +3,10 @@ import type { Bindings, ExpenseBody } from '../types'
 
 const expenses = new Hono<{ Bindings: Bindings }>()
 
+let catCache: string[] | null = null
+let catCacheAt = 0
+const CAT_TTL = 24 * 60 * 60 * 1000
+
 expenses.get('/api/expenses', async (c) => {
   const month = c.req.query('month')
   const stmt = month
@@ -10,6 +14,19 @@ expenses.get('/api/expenses', async (c) => {
     : c.env.DB.prepare('SELECT * FROM expenses ORDER BY date DESC, id DESC')
   const { results } = await stmt.all()
   return c.json(results)
+})
+
+expenses.get('/api/categories', async (c) => {
+  if (catCache && Date.now() - catCacheAt < CAT_TTL) {
+    c.header('X-Cache', 'HIT')
+    return c.json(catCache)
+  }
+  const { results } = await c.env.DB.prepare('SELECT DISTINCT category FROM expenses WHERE category IS NOT NULL ORDER BY category').all() as { results: { category: string }[] }
+  catCache = results.map(r => r.category)
+  catCacheAt = Date.now()
+  c.header('X-Cache', 'MISS')
+  c.header('Cache-Control', 'private, max-age=86400')
+  return c.json(catCache)
 })
 
 expenses.post('/api/expenses', async (c) => {
@@ -30,6 +47,7 @@ expenses.post('/api/expenses', async (c) => {
   const { meta } = await c.env.DB.prepare(
     'INSERT INTO expenses (description,amount,date,paid_by,category,who_for,is_marriage_related,source,raw_input) VALUES (?,?,?,?,?,?,?,?,?)'
   ).bind(b.description, b.amount, b.date, b.paid_by, b.category, b.who_for, b.is_marriage_related ? 1 : 0, b.source ?? 'manual', b.raw_input ?? null).run()
+  catCache = null
   return c.json({ id: meta.last_row_id })
 })
 
@@ -38,11 +56,13 @@ expenses.put('/api/expenses/:id', async (c) => {
   await c.env.DB.prepare(
     'UPDATE expenses SET description=?,amount=?,date=?,paid_by=?,category=?,who_for=? WHERE id=?'
   ).bind(b.description, b.amount, b.date, b.paid_by, b.category, b.who_for, c.req.param('id')).run()
+  catCache = null
   return c.json({ ok: true })
 })
 
 expenses.delete('/api/expenses/:id', async (c) => {
   await c.env.DB.prepare('DELETE FROM expenses WHERE id=?').bind(c.req.param('id')).run()
+  catCache = null
   return c.json({ ok: true })
 })
 
