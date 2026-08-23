@@ -15,6 +15,8 @@ export function getHTML(): string {
   --shadow:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.04);
 }
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+.toast{position:fixed;bottom:1.25rem;left:50%;transform:translateX(-50%);background:#1e293b;color:#fff;padding:.625rem 1rem;border-radius:.5rem;font-size:.875rem;box-shadow:0 4px 16px rgba(0,0,0,.3);z-index:999;opacity:0;transition:opacity .2s}
+.toast.show{opacity:1}
 .header{background:var(--primary);color:#fff;padding:.875rem 1rem;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;box-shadow:0 2px 8px rgba(99,102,241,.35)}
 .header h1{font-size:1.0625rem;font-weight:600}
 .export-btn{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);padding:.3rem .65rem;border-radius:.375rem;font-size:.8125rem;cursor:pointer}
@@ -63,7 +65,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .btn-icon:hover{background:#f1f5f9}
 .empty{text-align:center;padding:3rem 1rem;color:var(--muted)}
 .empty-icon{font-size:2.5rem;margin-bottom:.5rem}
-.fab{position:fixed;bottom:1.5rem;right:1.5rem;z-index:200}
+.fab{position:fixed;bottom:max(1.25rem,env(safe-area-inset-bottom) + .75rem);right:1rem;z-index:150}
+.hamburger{display:none}
+.header-nav{display:flex;gap:.5rem;align-items:center}
 .fab-main{width:3.25rem;height:3.25rem;border-radius:50%;background:var(--primary);color:#fff;border:none;cursor:pointer;font-size:1.625rem;line-height:1;box-shadow:0 4px 14px rgba(99,102,241,.45);display:flex;align-items:center;justify-content:center;transition:transform .15s}
 .fab-main:hover{transform:scale(1.08)}
 .fab-main.rotated{transform:rotate(45deg)}
@@ -128,26 +132,36 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
   .overlay{align-items:center}
   .summary{grid-template-columns:repeat(4,1fr)}
 }
+@media(max-width:640px){
+  .header{padding:.65rem .75rem;position:relative}
+  .header h1{font-size:.95rem;white-space:nowrap;flex:1}
+  .hamburger{display:flex;align-items:center;justify-content:center;width:2.1rem;height:2.1rem;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);border-radius:.375rem;color:#fff;font-size:1.15rem;cursor:pointer;flex-shrink:0}
+  .header-nav{display:none;position:absolute;top:100%;left:0;right:0;background:var(--primary);flex-direction:column;align-items:stretch;padding:.75rem;gap:.5rem;box-shadow:0 8px 16px rgba(0,0,0,.2);z-index:101}
+  .header-nav.open{display:flex}
+  .header-nav .pending-btn,.header-nav .export-btn{width:100%;justify-content:center}
+}
 </style>
 </head>
 <body>
 
 <header class="header">
   <h1 onclick="currentMonth=(()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');})();pushMonth();load();" style="cursor:pointer">Expense Tracker</h1>
-  <div style="display:flex;gap:.5rem;align-items:center">
-    <button class="pending-btn" onclick="openStmtModal()" id="stmt-btn" style="border-color:rgba(245,158,11,.6);background:rgba(245,158,11,.2)">
+  <button class="hamburger" id="hamburger" onclick="toggleHeaderMenu()" aria-label="Menu">&#9776;</button>
+  <nav class="header-nav" id="header-nav">
+    <button class="pending-btn" onclick="openStmtModal();closeHeaderMenu()" id="stmt-btn" style="border-color:rgba(245,158,11,.6);background:rgba(245,158,11,.2)">
       &#x1F512; <span id="stmt-count" style="display:none">0</span>
     </button>
-    <button class="pending-btn" onclick="openEmailModal()" id="email-btn" style="border-color:rgba(99,102,241,.6);background:rgba(99,102,241,.2)">
+    <button class="pending-btn" onclick="openEmailModal();closeHeaderMenu()" id="email-btn" style="border-color:rgba(99,102,241,.6);background:rgba(99,102,241,.2)">
       &#x1F4E7; <span id="email-count">0</span>
     </button>
-    <button class="pending-btn" onclick="openPendingModal()" id="pending-btn">
+    <button class="pending-btn" onclick="openPendingModal();closeHeaderMenu()" id="pending-btn">
       Review <span class="badge-count" id="pending-count">0</span>
     </button>
+    <button class="export-btn" onclick="(function(){var n=prompt('WhatsApp number (with country code):');if(!n)return;n=n.replace(/[^0-9]/g,'');window.open('https://wa.me/'+n,'_blank');})()">&#x1F4AC; WA</button>
     <a href="https://chatgpt.com/g/g-6a240ae10b248191b4ac7ef0bb3bf5c4-expense-tracker-assistant" target="_blank" rel="noopener" class="export-btn" style="text-decoration:none">&#x1F916; GPT</a>
     <button class="export-btn" onclick="exportCSV()">Export CSV</button>
     <a href="/auth/logout" class="export-btn" style="text-decoration:none">Logout</a>
-  </div>
+  </nav>
 </header>
 
 <div class="month-nav">
@@ -204,7 +218,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 </div>
 
 <div class="expenses-section">
-  <div class="section-title" style="margin-bottom:.5rem">Transactions</div>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.5rem">
+    <div class="section-title" style="margin-bottom:0">Transactions</div>
+    <select id="sort-select" onchange="setSort(this.value)" style="padding:.3rem .5rem;border:1.5px solid var(--border);border-radius:.4rem;font-size:.8rem;background:#fff;color:var(--text)">
+      <option value="date_desc">Date new → old</option>
+      <option value="date_asc">Date old → new</option>
+      <option value="amount_desc">Amount high → low</option>
+      <option value="amount_asc">Amount low → high</option>
+    </select>
+  </div>
   <div id="expenses-list"></div>
 </div>
 
@@ -215,6 +237,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
   </div>
   <button class="fab-main" id="fab-btn" onclick="toggleFab()">+</button>
 </div>
+
+<div class="toast" id="toast"></div>
 
 <div class="overlay" id="form-overlay">
   <div class="modal">
@@ -359,7 +383,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
       <div class="modal-title">&#x1F4E7; Pending Emails</div>
       <button class="modal-close" onclick="closeEmailModal()">&times;</button>
     </div>
-    <div style="padding:.625rem 1rem;border-bottom:1px solid var(--border);font-size:.8125rem;color:var(--muted)">Use ChatGPT with the OpenAPI spec to process these emails into expenses, then mark each done.</div>
+    <div style="padding:.625rem 1rem;border-bottom:1px solid var(--border);font-size:.8125rem;color:var(--muted)">ChatGPT: call <code>listPendingEmails</code> (defaults to oldest 5), then one <code>resolvePendingEmail</code> per email.</div>
     <div id="email-list"><div class="empty"><div class="empty-icon">&#x2705;</div><div>No pending emails</div></div></div>
   </div>
 </div>
@@ -374,6 +398,10 @@ let editingId=null;
 let fabOpen=false;
 let pendingStmts=[];
 let pendingEmails=[];
+
+function toggleHeaderMenu(){document.getElementById('header-nav').classList.toggle('open');}
+function closeHeaderMenu(){document.getElementById('header-nav').classList.remove('open');}
+document.addEventListener('click',function(e){if(!e.target.closest('.header'))closeHeaderMenu();});
 
 function toggleFab(){
   fabOpen=!fabOpen;
@@ -617,6 +645,16 @@ function filterCat(cat){
   filterExpenses(cat);
 }
 
+let sortMode='date_desc';
+function setSort(v){sortMode=v;const q=document.getElementById('search-input').value;if(q.trim())filterExpenses(q);else renderList();}
+function getSorted(list){
+  if(sortMode==='amount_desc')return [...list].sort(function(a,b){return b.amount-a.amount;});
+  if(sortMode==='amount_asc')return [...list].sort(function(a,b){return a.amount-b.amount;});
+  if(sortMode==='date_asc')return [...list].sort(function(a,b){return a.date.localeCompare(b.date)||a.id-b.id;});
+  if(sortMode==='date_desc')return [...list].sort(function(a,b){return b.date.localeCompare(a.date)||b.id-a.id;});
+  return list;
+}
+
 function filterExpenses(q){
   const term=q.toLowerCase().trim();
   const el=document.getElementById('expenses-list');
@@ -629,10 +667,30 @@ function filterExpenses(q){
     (e.raw_input&&e.raw_input.toLowerCase().includes(term))
   );
   if(!filtered.length){el.innerHTML='<div class="empty"><div class="empty-icon">&#x1F50D;</div><div>No matches</div></div>';return;}
-  const saved=expenses;
-  expenses=filtered;
-  renderList();
-  expenses=saved;
+  const sorted=getSorted(filtered);
+  el.innerHTML=sorted.map(e=>{
+    const pb=e.paid_by==='Prayashi'?'b-pink':'b-indigo';
+    const wf=e.who_for==='Prayashi'?'b-pink':e.who_for==='Common'?'b-amber':'b-indigo';
+    return'<div class="expense-card">'+
+      '<div class="exp-main">'+
+        '<div class="exp-desc">'+esc(e.description)+'</div>'+
+        (e.raw_input?'<div class="exp-raw">'+esc(e.raw_input)+'</div>':'')+
+        '<div class="exp-meta">'+
+          '<span class="badge '+pb+'">'+esc(e.paid_by)+'</span>'+
+          '<span class="badge '+wf+'">For: '+esc(e.who_for)+'</span>'+
+          '<span class="badge b-gray">'+esc(e.category)+'</span>'+
+        '</div>'+
+      '</div>'+
+      '<div class="exp-right">'+
+        '<div class="exp-amt">&#x20B9;'+fmt(e.amount)+'</div>'+
+        '<div class="exp-date">'+fmtDate(e.date)+'</div>'+
+        '<div class="exp-actions">'+
+          '<button class="btn-icon" onclick="openEditModal('+e.id+')" title="Edit">&#x270F;&#xFE0F;</button>'+
+          '<button class="btn-icon" onclick="delExpense('+e.id+')" title="Delete">&#x1F5D1;&#xFE0F;</button>'+
+        '</div>'+
+      '</div>'+
+    '</div>';
+  }).join('');
 }
 
 function card(label,cls,amount){
@@ -645,7 +703,8 @@ function renderList(){
     el.innerHTML='<div class="empty"><div class="empty-icon">&#x1F4ED;</div><div>No expenses this month</div></div>';
     return;
   }
-  el.innerHTML=expenses.map(e=>{
+  const sorted=getSorted(expenses);
+  el.innerHTML=sorted.map(e=>{
     const pb=e.paid_by==='Prayashi'?'b-pink':'b-indigo';
     const wf=e.who_for==='Prayashi'?'b-pink':e.who_for==='Common'?'b-amber':'b-indigo';
     return'<div class="expense-card">'+
@@ -722,6 +781,11 @@ async function submitForm(ev){
       btn.disabled=false;
       if(!confirm(err.message+'\\n\\nSave anyway?'))return;
       await fetch('/api/expenses',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...data,force:true})});
+      btn.disabled=false;
+      closeFormModal();
+      jumpToMonthOf(data.date);
+      load();
+      return;
     }
   }
   btn.disabled=false;
@@ -790,6 +854,10 @@ async function submitSmartForm(ev){
     const err=await res.json();
     if(!confirm(err.message+'\\n\\nSave anyway?'))return;
     await fetch('/api/expenses',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...data,force:true})});
+    closeSmartModal();
+    jumpToMonthOf(data.date);
+    load();
+    return;
   }
   closeSmartModal();
   load();
@@ -811,6 +879,25 @@ function applyMonthPicker(){
   pushMonth();
   closeMonthPicker();
   load();
+}
+
+let toastTimer=null;
+function showToast(msg){
+  const el=document.getElementById('toast');
+  el.textContent=msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>el.classList.remove('show'),2500);
+}
+
+function jumpToMonthOf(dateStr){
+  const savedMonth=dateStr.slice(0,7);
+  if(savedMonth===currentMonth)return false;
+  currentMonth=savedMonth;
+  pushMonth();
+  const[y,m]=savedMonth.split('-');
+  showToast('Added to '+MONTHS[parseInt(m)-1]+' '+y);
+  return true;
 }
 
 function ensureCategoryOption(selectId,value){
@@ -884,7 +971,7 @@ function renderPendingList(){
     var selPb=function(v){return p.paid_by===v?' selected':''};
     var selWf=function(v){return p.who_for===v?' selected':''};
     return '<div class="pending-card" id="pc-'+p.id+'">'+
-      '<div class="exp-desc">'+esc(p.description)+'</div>'+
+      '<div class="fr" style="margin-bottom:.4rem"><input type="text" id="pdesc-'+p.id+'" value="'+esc(p.description)+'" style="font-weight:600;font-size:.9375rem"></div>'+
       '<div class="pending-source">'+esc(p.source||'ingest')+' &middot; '+fmtDate(p.date)+'</div>'+
       (p.raw_input?'<div class="exp-raw" style="margin-top:.3rem">'+esc(p.raw_input.slice(0,120))+'</div>':'')+
       '<div class="fg2" style="margin-top:.625rem">'+
@@ -910,6 +997,7 @@ function renderPendingList(){
 
 async function approvePending(id){
   const overrides={
+    description:document.getElementById('pdesc-'+id).value,
     amount:parseFloat(document.getElementById('pa-'+id).value),
     date:document.getElementById('pd-'+id).value,
     paid_by:document.getElementById('ppb-'+id).value,
@@ -921,6 +1009,12 @@ async function approvePending(id){
     const err=await res.json();
     if(!confirm(err.message+'\\n\\nApprove anyway?'))return;
     await fetch('/api/pending/'+id+'/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...overrides,force:true})});
+    pendingItems=pendingItems.filter(p=>p.id!==id);
+    renderPendingList();
+    loadPendingCount();
+    jumpToMonthOf(overrides.date);
+    load();
+    return;
   }
   pendingItems=pendingItems.filter(p=>p.id!==id);
   renderPendingList();
@@ -1184,7 +1278,7 @@ async function rejectStmt(id){
 
 async function loadEmailCount(){
   try{
-    const res=await fetch('/api/pending-emails');
+    const res=await fetch('/api/pending-emails?all=1');
     pendingEmails=await res.json();
     document.getElementById('email-count').textContent=pendingEmails.length;
   }catch(e){}
