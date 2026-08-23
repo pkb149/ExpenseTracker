@@ -479,14 +479,16 @@ function renderSummary(){
     card('Total','v-total',total)+card('Prashant paid','v-prashant',pPaid)+
     card('Prayashi paid','v-prayashi',qPaid)+card('Common','v-common',common);
 
-  // Settlement balance: raw from actual shared expenses, adjusted by any recorded settlement payments
+  // Settlement balance: common split + cross-paid personal, adjusted by recorded settlements
   const cmnP=nonSettle.filter(e=>e.who_for==='Common'&&e.paid_by==='Prashant').reduce((s,e)=>s+e.amount,0);
   const cmnQ=nonSettle.filter(e=>e.who_for==='Common'&&e.paid_by==='Prayashi').reduce((s,e)=>s+e.amount,0);
   const totalCommon=cmnP+cmnQ;
+  const pForQ=nonSettle.filter(e=>e.who_for==='Prayashi'&&e.paid_by==='Prashant').reduce((s,e)=>s+e.amount,0);
+  const qForP=nonSettle.filter(e=>e.who_for==='Prashant'&&e.paid_by==='Prayashi').reduce((s,e)=>s+e.amount,0);
   const settleByPrayashi=expenses.filter(e=>e.category==='Settlement'&&e.paid_by==='Prayashi').reduce((s,e)=>s+e.amount,0);
   const settleByPrashant=expenses.filter(e=>e.category==='Settlement'&&e.paid_by==='Prashant').reduce((s,e)=>s+e.amount,0);
-  if(totalCommon>0){
-    const net=(cmnP-cmnQ)/2-settleByPrayashi+settleByPrashant;
+  if(totalCommon>0||pForQ>0||qForP>0){
+    const net=(cmnP-cmnQ)/2+pForQ-qForP-settleByPrayashi+settleByPrashant;
     const settled=Math.abs(net)<1;
     let who,color;
     if(settled){who='All settled up!';color='var(--success)';}
@@ -501,7 +503,8 @@ function renderSummary(){
         '<div class="settle-amount" style="color:'+color+'">'+who+(clickable?' &#x270F;':'')+'</div>'+
         '<div class="settle-detail">Common &#x20B9;'+fmt(totalCommon)+
           ' &nbsp;·&nbsp; Prashant paid &#x20B9;'+fmt(cmnP)+
-          ' &nbsp;·&nbsp; Prayashi paid &#x20B9;'+fmt(cmnQ)+'</div>'+
+          ' &nbsp;·&nbsp; Prayashi paid &#x20B9;'+fmt(cmnQ)+
+          (pForQ||qForP?' &nbsp;·&nbsp; Cross ₹'+fmt(pForQ)+' (P→Q) / ₹'+fmt(qForP)+' (Q→P)':'')+'</div>'+
       '</div>';
     document.getElementById('settlement-section').style.display='block';
   }else{
